@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  background-color: #0a0a0f;
+  color: #e2e8f0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  border-color: #1e1e2e;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #1e1e2e;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #2a2a3a;
+}
+
+/* Inputs & selects default look */
+input, select, textarea {
+  font-family: inherit;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.7);
+  cursor: pointer;
+}
+
+/* Number input — hide spinners */
+input[type=number]::-webkit-inner-spin-button,
+input[type=number]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type=number] {
+  -moz-appearance: textfield;
+}
+
+/* Card hover glow */
+.card-glow-pos:hover {
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3), 0 4px 20px rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.4);
+}
+.card-glow-neg:hover {
+  box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.3), 0 4px 20px rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.4);
+}
+.card-glow:hover {
+  border-color: #2a2a3a;
+}
+
+/* Animated selection pulse */
+@keyframes pulse-border {
+  0%, 100% { border-color: #1e1e2e; }
+  50% { border-color: #3b82f6; }
+}
+
+/* Utility for chart tooltips */
+.recharts-tooltip-wrapper {
+  outline: none !important;
+}
+.recharts-default-tooltip {
+  background-color: #111118 !important;
+  border: 1px solid #1e1e2e !important;
+  border-radius: 8px !important;
+  padding: 10px 12px !important;
+}
+.recharts-tooltip-label {
+  color: #e2e8f0 !important;
+  font-weight: 600 !important;
+  margin-bottom: 4px !important;
+}
+.recharts-tooltip-item {
+  color: #e2e8f0 !important;
+}
+
+/* Focus ring */
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
