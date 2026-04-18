@@ -1,520 +1,397 @@
 import { useMemo } from 'react';
 import {
-  addDays,
-  differenceInDays,
-  endOfMonth,
-  format,
-  parseISO,
-  startOfMonth,
-  subDays,
-  subMonths,
-} from 'date-fns';
-import {
-  Bar,
   BarChart,
-  CartesianGrid,
-  Cell,
-  Line,
-  LineChart,
+  Bar,
   ResponsiveContainer,
-  Tooltip,
   XAxis,
   YAxis,
+  Tooltip,
+  CartesianGrid,
+  LineChart,
+  Line,
 } from 'recharts';
-import {
-  Calendar,
-  Flame,
-  Repeat,
-  TrendingDown,
-  TrendingUp,
-  Trophy,
-} from 'lucide-react';
-import { Card } from '../components/ui/Card';
-import { Money } from '../components/ui/Money';
-import { PageHeader } from '../components/layout/PageHeader';
+import { format, subDays, eachDayOfInterval, startOfDay, subMonths, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
+import { Flame, TrendingUp, Calendar, BarChart3, Target, Award, Repeat } from 'lucide-react';
 import { useStore } from '../store/useStore';
-import {
-  dayKey,
-  formatShortCurrency,
-  isSameMonth,
-  monthKey,
-  monthLabel,
-} from '../lib/utils';
-import { CATEGORY_COLORS, CATEGORY_EMOJIS } from '../types';
+import { useI18n } from '../i18n/useI18n';
+import { MoneyText } from '../components/ui/MoneyText';
+import { CATEGORY_COLORS } from '../types';
+import { round2, formatCompact } from '../lib/money';
 
 export function Analytics() {
-  const transactions = useStore(s => s.transactions);
-  const currency = useStore(s => s.settings.currency);
-  const today = new Date();
+  const { t, tc, money, lang } = useI18n();
+  const transactions = useStore((s) => s.transactions);
 
-  const expenses = useMemo(
-    () => transactions.filter(t => t.type === 'expense'),
-    [transactions]
-  );
+  const now = new Date();
 
-  // Heatmap — last 16 weeks (112 days)
-  const heatmapDays = useMemo(() => {
-    const totalDays = 16 * 7;
-    const start = subDays(today, totalDays - 1);
-    const dailyTotals: Record<string, number> = {};
-    for (const t of expenses) {
-      const k = dayKey(t.date);
-      dailyTotals[k] = (dailyTotals[k] || 0) + t.amount;
+  // ==========================================================
+  // Heatmap — last 90 days
+  // ==========================================================
+  const heatmap = useMemo(() => {
+    const start = startOfDay(subDays(now, 89));
+    const days = eachDayOfInterval({ start, end: now });
+    const dayMap: Record<string, number> = {};
+    for (const tx of transactions) {
+      if (tx.tags?.includes('__split_parent')) continue;
+      if (tx.type !== 'expense') continue;
+      const key = format(new Date(tx.date), 'yyyy-MM-dd');
+      dayMap[key] = round2((dayMap[key] || 0) + tx.amount);
     }
-    const out: { date: Date; key: string; value: number }[] = [];
-    for (let i = 0; i < totalDays; i++) {
-      const d = addDays(start, i);
-      const k = dayKey(d);
-      out.push({ date: d, key: k, value: dailyTotals[k] || 0 });
-    }
-    return out;
-  }, [expenses]);
-  const maxDay = heatmapDays.reduce((m, d) => Math.max(m, d.value), 0);
-
-  function heatColor(value: number): string {
-    if (value === 0) return '#111118';
-    const ratio = Math.min(1, value / (maxDay || 1));
-    // Gradient: red (expenses grow)
-    if (ratio < 0.25) return 'rgba(239, 68, 68, 0.2)';
-    if (ratio < 0.5) return 'rgba(239, 68, 68, 0.4)';
-    if (ratio < 0.75) return 'rgba(239, 68, 68, 0.65)';
-    return 'rgba(239, 68, 68, 0.9)';
-  }
-
-  // Organize heatmap into weeks (columns) × 7 (rows)
-  const heatWeeks = useMemo(() => {
-    const weeks: { date: Date; key: string; value: number }[][] = [];
-    for (let i = 0; i < heatmapDays.length; i += 7) {
-      weeks.push(heatmapDays.slice(i, i + 7));
-    }
-    return weeks;
-  }, [heatmapDays]);
-
-  // Category breakdown (this month)
-  const catBreakdown = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const t of expenses) {
-      if (!isSameMonth(t.date, today)) continue;
-      map[t.category] = (map[t.category] || 0) + t.amount;
-    }
-    const entries = Object.entries(map).map(([name, value]) => ({ name, value }));
-    entries.sort((a, b) => b.value - a.value);
-    const total = entries.reduce((s, e) => s + e.value, 0);
-    return { entries, total };
-  }, [expenses]);
-
-  // Month-over-month
-  const momTable = useMemo(() => {
-    const out: {
-      key: string;
-      label: string;
-      income: number;
-      expense: number;
-      net: number;
-    }[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = subMonths(today, i);
-      const mk = monthKey(d);
-      const inc = transactions
-        .filter(t => t.type === 'income' && monthKey(t.date) === mk)
-        .reduce((s, t) => s + t.amount, 0);
-      const exp = transactions
-        .filter(t => t.type === 'expense' && monthKey(t.date) === mk)
-        .reduce((s, t) => s + t.amount, 0);
-      out.push({ key: mk, label: monthLabel(mk), income: inc, expense: exp, net: inc - exp });
-    }
-    return out;
+    const values = Object.values(dayMap);
+    const max = values.length ? Math.max(...values) : 0;
+    return { days, dayMap, max };
   }, [transactions]);
 
-  // Average daily spend (current month so far)
-  const avgDaily = useMemo(() => {
-    const mStart = startOfMonth(today);
-    const daysElapsed = Math.max(1, differenceInDays(today, mStart) + 1);
-    const monthExp = expenses
-      .filter(t => isSameMonth(t.date, today))
-      .reduce((s, t) => s + t.amount, 0);
-    return monthExp / daysElapsed;
-  }, [expenses]);
-
-  // 30-day rolling average trend
-  const trendLine = useMemo(() => {
-    const days: { label: string; date: string; spend: number; rolling: number }[] = [];
-    for (let i = 29; i >= 0; i--) {
-      const d = subDays(today, i);
-      const k = dayKey(d);
-      const spend = expenses
-        .filter(t => dayKey(t.date) === k)
-        .reduce((s, t) => s + t.amount, 0);
-      days.push({ label: format(d, 'MMM d'), date: k, spend, rolling: 0 });
+  // ==========================================================
+  // Category breakdown — last 30 days
+  // ==========================================================
+  const breakdown = useMemo(() => {
+    const start = subDays(now, 29);
+    const map: Record<string, number> = {};
+    for (const tx of transactions) {
+      if (tx.tags?.includes('__split_parent')) continue;
+      if (tx.type !== 'expense') continue;
+      const d = new Date(tx.date);
+      if (d < start || d > now) continue;
+      map[tx.category] = round2((map[tx.category] || 0) + tx.amount);
     }
-    // compute rolling 7-day avg
-    for (let i = 0; i < days.length; i++) {
-      const slice = days.slice(Math.max(0, i - 6), i + 1);
-      days[i].rolling =
-        slice.reduce((s, d) => s + d.spend, 0) / slice.length;
+    const total = round2(Object.values(map).reduce((a, b) => a + b, 0));
+    const arr = Object.entries(map)
+      .map(([name, value]) => ({
+        name,
+        value,
+        pct: total > 0 ? (value / total) * 100 : 0,
+      }))
+      .sort((a, b) => b.value - a.value);
+    return { arr, total };
+  }, [transactions]);
+
+  // ==========================================================
+  // MoM comparison — last 3 months per category
+  // ==========================================================
+  const momTable = useMemo(() => {
+    const months = [0, 1, 2].map((i) => subMonths(now, i));
+    const map: Record<string, number[]> = {};
+    for (const tx of transactions) {
+      if (tx.tags?.includes('__split_parent')) continue;
+      if (tx.type !== 'expense') continue;
+      for (let i = 0; i < 3; i++) {
+        const m = months[i];
+        const s = startOfMonth(m);
+        const e = endOfMonth(m);
+        const d = new Date(tx.date);
+        if (isWithinInterval(d, { start: s, end: e })) {
+          if (!map[tx.category]) map[tx.category] = [0, 0, 0];
+          map[tx.category][i] = round2(map[tx.category][i] + tx.amount);
+        }
+      }
+    }
+    const rows = Object.entries(map)
+      .map(([cat, vals]) => ({ cat, vals }))
+      .sort((a, b) => b.vals[0] - a.vals[0]);
+    return { rows, months };
+  }, [transactions]);
+
+  // ==========================================================
+  // Rolling 30-day average
+  // ==========================================================
+  const rolling = useMemo(() => {
+    const days: { day: string; avg: number }[] = [];
+    for (let i = 59; i >= 0; i--) {
+      const endDay = subDays(now, i);
+      const startDay = subDays(endDay, 29);
+      let sum = 0;
+      for (const tx of transactions) {
+        if (tx.tags?.includes('__split_parent')) continue;
+        if (tx.type !== 'expense') continue;
+        const d = new Date(tx.date);
+        if (d >= startDay && d <= endDay) sum += tx.amount;
+      }
+      days.push({
+        day: format(endDay, 'dd/MM'),
+        avg: round2(sum / 30),
+      });
     }
     return days;
-  }, [expenses]);
+  }, [transactions]);
 
-  // Biggest single expense (last 90 days)
-  const biggest = useMemo(() => {
-    const cutoff = subDays(today, 90).toISOString();
-    const recent = expenses.filter(t => t.date >= cutoff);
-    if (recent.length === 0) return null;
-    return recent.reduce((a, b) => (a.amount > b.amount ? a : b));
-  }, [expenses]);
+  // ==========================================================
+  // Stats
+  // ==========================================================
+  const stats = useMemo(() => {
+    const start30 = subDays(now, 29);
+    const expenses30 = transactions.filter((tx) => {
+      if (tx.tags?.includes('__split_parent')) return false;
+      if (tx.type !== 'expense') return false;
+      const d = new Date(tx.date);
+      return d >= start30 && d <= now;
+    });
+    const total30 = round2(expenses30.reduce((a, b) => a + b.amount, 0));
+    const avgDaily = round2(total30 / 30);
 
-  // Most frequent expense category (last 90 days)
-  const mostFrequent = useMemo(() => {
-    const cutoff = subDays(today, 90).toISOString();
-    const counts: Record<string, number> = {};
-    for (const t of expenses) {
-      if (t.date < cutoff) continue;
-      counts[t.category] = (counts[t.category] || 0) + 1;
+    const biggest =
+      expenses30.length > 0
+        ? expenses30.reduce((max, t) => (t.amount > max.amount ? t : max), expenses30[0])
+        : null;
+
+    const freqMap: Record<string, number> = {};
+    for (const tx of expenses30) {
+      const key = tx.description.trim().toLowerCase();
+      if (!key) continue;
+      freqMap[key] = (freqMap[key] || 0) + 1;
     }
-    const arr = Object.entries(counts);
-    if (arr.length === 0) return null;
-    arr.sort((a, b) => b[1] - a[1]);
-    return { category: arr[0][0], count: arr[0][1] };
-  }, [expenses]);
+    const mostFrequent = Object.entries(freqMap).sort((a, b) => b[1] - a[1])[0];
+    const mostFrequentTx = mostFrequent
+      ? expenses30.find((t) => t.description.trim().toLowerCase() === mostFrequent[0])
+      : null;
+
+    return { avgDaily, biggest, mostFrequent, mostFrequentTx, total30 };
+  }, [transactions]);
+
+  const heatColor = (v: number) => {
+    if (!v || heatmap.max === 0) return 'bg-surface-hover';
+    const r = v / heatmap.max;
+    if (r < 0.25) return 'bg-[rgba(239,68,68,0.15)]';
+    if (r < 0.5) return 'bg-[rgba(239,68,68,0.35)]';
+    if (r < 0.75) return 'bg-[rgba(239,68,68,0.6)]';
+    return 'bg-[rgba(239,68,68,0.9)]';
+  };
 
   return (
-    <div>
-      <PageHeader
-        title="Analytics"
-        description="Understand your spending patterns and trends over time."
-      />
+    <div className="animate-fade-in">
+      <header className="mb-6">
+        <h1 className="text-2xl font-bold">{t('analytics.title')}</h1>
+        <p className="text-sm text-muted">{t('analytics.heatmapDesc')}</p>
+      </header>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <Card>
-          <div className="flex justify-between items-start">
-            <div className="text-xs font-medium text-muted uppercase tracking-wide">
-              Avg Daily Spend
-            </div>
-            <Calendar size={15} className="text-muted" />
+      {/* Stats cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div className="card p-4">
+          <div className="flex items-center gap-2 text-[11px] text-muted uppercase tracking-wider mb-2">
+            <Calendar size={12} />
+            {t('analytics.averageDaily')}
           </div>
-          <Money
-            value={avgDaily}
-            className="text-2xl font-semibold mt-2 block"
-            signInvert
-          />
-          <div className="text-xs text-muted mt-1">This month</div>
-        </Card>
+          <MoneyText value={-stats.avgDaily} forceColor="neg" size="lg" />
+        </div>
 
-        <Card>
-          <div className="flex justify-between items-start">
-            <div className="text-xs font-medium text-muted uppercase tracking-wide">
-              Biggest Expense
-            </div>
-            <Flame size={15} className="text-neg" />
+        <div className="card p-4">
+          <div className="flex items-center gap-2 text-[11px] text-muted uppercase tracking-wider mb-2">
+            <Award size={12} />
+            {t('analytics.biggestExpense')}
           </div>
-          {biggest ? (
+          {stats.biggest ? (
             <>
-              <Money
-                value={-biggest.amount}
-                className="text-2xl font-semibold mt-2 block"
-              />
+              <MoneyText value={-stats.biggest.amount} forceColor="neg" size="lg" />
               <div className="text-xs text-muted mt-1 truncate">
-                {biggest.description}
+                {stats.biggest.description}
               </div>
             </>
           ) : (
-            <div className="text-sm text-muted mt-2">No data</div>
+            <div className="text-sm text-muted">—</div>
           )}
-        </Card>
+        </div>
 
-        <Card>
-          <div className="flex justify-between items-start">
-            <div className="text-xs font-medium text-muted uppercase tracking-wide">
-              Most Frequent
-            </div>
-            <Repeat size={15} className="text-muted" />
+        <div className="card p-4">
+          <div className="flex items-center gap-2 text-[11px] text-muted uppercase tracking-wider mb-2">
+            <Repeat size={12} />
+            {t('analytics.mostFrequent')}
           </div>
-          {mostFrequent ? (
+          {stats.mostFrequentTx ? (
             <>
-              <div className="text-2xl font-semibold mt-2">
-                {CATEGORY_EMOJIS[mostFrequent.category] || '📦'}{' '}
-                {mostFrequent.category}
-              </div>
+              <div className="text-lg font-semibold truncate">{stats.mostFrequentTx.description}</div>
               <div className="text-xs text-muted mt-1">
-                {mostFrequent.count} transactions · last 90d
+                {stats.mostFrequent?.[1]}× · {tc(stats.mostFrequentTx.category)}
               </div>
             </>
           ) : (
-            <div className="text-sm text-muted mt-2">No data</div>
+            <div className="text-sm text-muted">—</div>
           )}
-        </Card>
+        </div>
 
-        <Card>
-          <div className="flex justify-between items-start">
-            <div className="text-xs font-medium text-muted uppercase tracking-wide">
-              This Month Total
-            </div>
-            <TrendingDown size={15} className="text-neg" />
+        <div className="card p-4">
+          <div className="flex items-center gap-2 text-[11px] text-muted uppercase tracking-wider mb-2">
+            <TrendingUp size={12} />
+            {t('common.total')} · 30d
           </div>
-          <Money
-            value={-catBreakdown.total}
-            className="text-2xl font-semibold mt-2 block"
-          />
-          <div className="text-xs text-muted mt-1">
-            {expenses.filter(t => isSameMonth(t.date, today)).length} transactions
-          </div>
-        </Card>
+          <MoneyText value={-stats.total30} forceColor="neg" size="lg" />
+        </div>
       </div>
 
       {/* Heatmap */}
-      <Card className="mb-6" id="heatmap">
-        <div className="mb-4 flex justify-between items-start">
-          <div>
-            <h2 className="text-base font-semibold">Spending Heatmap</h2>
-            <p className="text-xs text-muted mt-0.5">Last 16 weeks · daily expenses</p>
-          </div>
-          <div className="flex items-center gap-2 text-[11px] text-muted">
-            <span>Less</span>
-            <div className="flex gap-1">
-              {[0, 0.3, 0.5, 0.75, 1].map((r, i) => (
-                <div
-                  key={i}
-                  className="w-3 h-3 rounded-sm"
-                  style={{
-                    background:
-                      r === 0 ? '#111118' : `rgba(239, 68, 68, ${0.2 + r * 0.7})`,
-                    border: r === 0 ? '1px solid #1e1e2e' : 'none',
-                  }}
+      <div className="card p-5 mb-6">
+        <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
+          <Flame size={16} className="text-neg" />
+          {t('analytics.heatmap')}
+        </h3>
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(14px,1fr))] gap-1">
+          {heatmap.days.map((d) => {
+            const key = format(d, 'yyyy-MM-dd');
+            const v = heatmap.dayMap[key] || 0;
+            return (
+              <div
+                key={key}
+                className={`${heatColor(v)} aspect-square rounded-sm border border-border/40`}
+                title={`${format(d, 'MMM d')} · ${money(v)}`}
+              />
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2 text-[11px] text-muted mt-3">
+          <span>{t('common.empty')}</span>
+          <span className="w-3 h-3 rounded-sm bg-surface-hover border border-border" />
+          <span className="w-3 h-3 rounded-sm bg-[rgba(239,68,68,0.15)]" />
+          <span className="w-3 h-3 rounded-sm bg-[rgba(239,68,68,0.35)]" />
+          <span className="w-3 h-3 rounded-sm bg-[rgba(239,68,68,0.6)]" />
+          <span className="w-3 h-3 rounded-sm bg-[rgba(239,68,68,0.9)]" />
+          <span>{t('analytics.biggestExpense')}</span>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+        {/* Breakdown */}
+        <div className="card p-5">
+          <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
+            <BarChart3 size={16} className="text-pos" />
+            {t('analytics.breakdown')}
+          </h3>
+          <div className="h-64">
+            <ResponsiveContainer>
+              <BarChart data={breakdown.arr} layout="vertical" margin={{ left: 10, right: 20 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" horizontal={false} />
+                <XAxis type="number" stroke="var(--text-muted)" tickFormatter={(v) => formatCompact(v, lang)} />
+                <YAxis
+                  type="category"
+                  dataKey="name"
+                  stroke="var(--text-muted)"
+                  width={80}
+                  tickFormatter={(v) => tc(v)}
                 />
-              ))}
-            </div>
-            <span>More</span>
+                <Tooltip formatter={(v: number) => money(v)} />
+                <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                  {breakdown.arr.map((d) => (
+                    <rect key={d.name} fill={CATEGORY_COLORS[d.name] || '#64748b'} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
           </div>
         </div>
 
-        <div className="overflow-x-auto">
-          <div className="flex gap-1 min-w-fit">
-            {/* Day labels */}
-            <div className="flex flex-col gap-1 mr-2 text-[10px] text-muted">
-              {['Mon', '', 'Wed', '', 'Fri', '', 'Sun'].map((d, i) => (
-                <div key={i} className="h-[14px] flex items-center">
-                  {d}
+        {/* Top 5 */}
+        <div className="card p-5">
+          <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
+            <Target size={16} className="text-warn" />
+            {t('analytics.topCategories')}
+          </h3>
+          {breakdown.arr.length === 0 ? (
+            <div className="text-sm text-muted py-8 text-center">{t('common.empty')}</div>
+          ) : (
+            <div className="space-y-4">
+              {breakdown.arr.slice(0, 5).map((c) => (
+                <div key={c.name}>
+                  <div className="flex items-center justify-between text-sm mb-1">
+                    <span className="flex items-center gap-2">
+                      <span
+                        className="w-2.5 h-2.5 rounded-full"
+                        style={{ background: CATEGORY_COLORS[c.name] || '#64748b' }}
+                      />
+                      <span>{tc(c.name)}</span>
+                    </span>
+                    <span className="text-muted tabular-nums text-xs">
+                      {c.pct.toFixed(1)}%
+                    </span>
+                  </div>
+                  <div className="h-2 bg-surface-hover rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{
+                        width: `${Math.min(100, c.pct)}%`,
+                        background: CATEGORY_COLORS[c.name] || '#64748b',
+                      }}
+                    />
+                  </div>
+                  <div className="text-[11px] text-muted mt-1">
+                    <MoneyText value={-c.value} size="sm" forceColor="neg" />
+                  </div>
                 </div>
               ))}
             </div>
-            {heatWeeks.map((week, wi) => (
-              <div key={wi} className="flex flex-col gap-1">
-                {week.map(day => (
-                  <div
-                    key={day.key}
-                    title={`${format(day.date, 'MMM d, yyyy')} — ${day.value.toFixed(2)}`}
-                    className="w-[14px] h-[14px] rounded-sm border border-border/60"
-                    style={{ background: heatColor(day.value) }}
-                  />
-                ))}
-              </div>
-            ))}
-          </div>
+          )}
         </div>
-      </Card>
-
-      {/* Category bars + Top 5 */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
-        <Card>
-          <div className="mb-4">
-            <h2 className="text-base font-semibold">Category Breakdown</h2>
-            <p className="text-xs text-muted mt-0.5">
-              % of total expenses this month
-            </p>
-          </div>
-          {catBreakdown.entries.length === 0 ? (
-            <div className="text-sm text-muted py-6 text-center">
-              No expenses this month
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {catBreakdown.entries.map(c => {
-                const pct = (c.value / catBreakdown.total) * 100;
-                return (
-                  <div key={c.name}>
-                    <div className="flex justify-between items-center mb-1.5 text-sm">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className="w-2 h-2 rounded-full"
-                          style={{
-                            background: CATEGORY_COLORS[c.name] || '#64748b',
-                          }}
-                        />
-                        <span>{c.name}</span>
-                        <span className="text-xs text-muted">
-                          {pct.toFixed(1)}%
-                        </span>
-                      </div>
-                      <Money value={-c.value} signInvert className="font-medium" />
-                    </div>
-                    <div className="h-2 rounded-full bg-surface-hover overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all"
-                        style={{
-                          width: `${pct}%`,
-                          background: CATEGORY_COLORS[c.name] || '#64748b',
-                        }}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </Card>
-
-        <Card>
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h2 className="text-base font-semibold">Top 5 Categories</h2>
-              <p className="text-xs text-muted mt-0.5">By spending this month</p>
-            </div>
-            <Trophy size={18} className="text-muted" />
-          </div>
-          {catBreakdown.entries.length === 0 ? (
-            <div className="text-sm text-muted py-6 text-center">No data</div>
-          ) : (
-            <div className="space-y-3">
-              {catBreakdown.entries.slice(0, 5).map((c, i) => {
-                const pct = (c.value / catBreakdown.total) * 100;
-                return (
-                  <div key={c.name} className="flex items-center gap-3">
-                    <div
-                      className={`w-7 h-7 rounded-lg flex items-center justify-center text-xs font-semibold flex-shrink-0 ${
-                        i === 0
-                          ? 'bg-pos-soft text-pos'
-                          : 'bg-surface-hover text-muted'
-                      }`}
-                    >
-                      #{i + 1}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex justify-between items-center mb-1 text-sm">
-                        <span className="truncate">
-                          {CATEGORY_EMOJIS[c.name] || '📦'} {c.name}
-                        </span>
-                        <Money value={-c.value} signInvert className="font-medium" />
-                      </div>
-                      <div className="h-1.5 rounded-full bg-surface-hover overflow-hidden">
-                        <div
-                          className="h-full rounded-full"
-                          style={{
-                            width: `${pct}%`,
-                            background: CATEGORY_COLORS[c.name] || '#64748b',
-                          }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </Card>
       </div>
 
-      {/* Rolling avg trend */}
-      <Card className="mb-6">
-        <div className="mb-4">
-          <h2 className="text-base font-semibold">Spending Trend</h2>
-          <p className="text-xs text-muted mt-0.5">
-            30 days · daily (bars) and 7-day rolling average (line)
-          </p>
+      {/* Rolling average */}
+      <div className="card p-5 mb-6">
+        <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
+          <TrendingUp size={16} className="text-pos" />
+          {t('analytics.rollingAverage')}
+        </h3>
+        <div className="h-52">
+          <ResponsiveContainer>
+            <LineChart data={rolling}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+              <XAxis dataKey="day" stroke="var(--text-muted)" />
+              <YAxis stroke="var(--text-muted)" tickFormatter={(v) => formatCompact(v, lang)} />
+              <Tooltip formatter={(v: number) => money(v)} />
+              <Line
+                type="monotone"
+                dataKey="avg"
+                stroke="#3b82f6"
+                strokeWidth={2.5}
+                dot={false}
+              />
+            </LineChart>
+          </ResponsiveContainer>
         </div>
-        <ResponsiveContainer width="100%" height={240}>
-          <BarChart data={trendLine} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-            <CartesianGrid stroke="#1e1e2e" vertical={false} />
-            <XAxis
-              dataKey="label"
-              stroke="#64748b"
-              fontSize={10}
-              tickLine={false}
-              axisLine={false}
-              interval={3}
-            />
-            <YAxis
-              stroke="#64748b"
-              fontSize={11}
-              tickLine={false}
-              axisLine={false}
-              width={70}
-              tickFormatter={(v: number) => formatShortCurrency(v, currency)}
-            />
-            <Tooltip
-              formatter={(v: number) => formatShortCurrency(v, currency)}
-              cursor={{ fill: 'rgba(255,255,255,0.03)' }}
-            />
-            <Bar dataKey="spend" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={16} />
-          </BarChart>
-        </ResponsiveContainer>
-        <ResponsiveContainer width="100%" height={80}>
-          <LineChart data={trendLine} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-            <XAxis dataKey="label" hide />
-            <YAxis hide />
-            <Tooltip
-              formatter={(v: number) => formatShortCurrency(v, currency)}
-            />
-            <Line
-              type="monotone"
-              dataKey="rolling"
-              stroke="#3b82f6"
-              strokeWidth={2}
-              dot={false}
-            />
-          </LineChart>
-        </ResponsiveContainer>
-      </Card>
+      </div>
 
-      {/* MoM Table */}
-      <Card>
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h2 className="text-base font-semibold">Month-over-Month</h2>
-            <p className="text-xs text-muted mt-0.5">
-              Compare income, expenses and net across 6 months
-            </p>
-          </div>
-          <TrendingUp size={18} className="text-muted" />
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted">
-                <th className="text-left py-2 px-3">Month</th>
-                <th className="text-right py-2 px-3">Income</th>
-                <th className="text-right py-2 px-3">Expenses</th>
-                <th className="text-right py-2 px-3">Net</th>
-                <th className="text-right py-2 px-3">vs Prev</th>
-              </tr>
-            </thead>
-            <tbody>
-              {momTable.map((m, i) => {
-                const prev = momTable[i - 1];
-                const diff = prev ? m.net - prev.net : 0;
-                return (
-                  <tr key={m.key} className="border-b border-border/50">
-                    <td className="py-2.5 px-3 font-medium">{m.label}</td>
-                    <td className="py-2.5 px-3 text-right tabular-nums">
-                      <Money value={m.income} />
+      {/* MoM table */}
+      <div className="card p-5">
+        <h3 className="text-sm font-semibold mb-4">{t('analytics.mom')}</h3>
+        {momTable.rows.length === 0 ? (
+          <div className="text-sm text-muted py-6 text-center">{t('common.empty')}</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border">
+                  <th className="py-2 px-2 text-left text-[11px] uppercase tracking-wider text-muted">
+                    {t('common.category')}
+                  </th>
+                  {momTable.months.map((m, i) => (
+                    <th
+                      key={i}
+                      className="py-2 px-2 text-right text-[11px] uppercase tracking-wider text-muted"
+                    >
+                      {format(m, 'MMM yy')}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {momTable.rows.map((row) => (
+                  <tr key={row.cat} className="border-b border-border last:border-0">
+                    <td className="py-2 px-2">
+                      <span className="flex items-center gap-2">
+                        <span
+                          className="w-2 h-2 rounded-full"
+                          style={{ background: CATEGORY_COLORS[row.cat] || '#64748b' }}
+                        />
+                        {tc(row.cat)}
+                      </span>
                     </td>
-                    <td className="py-2.5 px-3 text-right tabular-nums">
-                      <Money value={-m.expense} />
-                    </td>
-                    <td className="py-2.5 px-3 text-right tabular-nums">
-                      <Money value={m.net} forceSign />
-                    </td>
-                    <td className="py-2.5 px-3 text-right tabular-nums">
-                      {prev ? <Money value={diff} forceSign /> : <span className="text-muted">—</span>}
-                    </td>
+                    {row.vals.map((v, i) => (
+                      <td key={i} className="py-2 px-2 text-right">
+                        <MoneyText value={-v} size="sm" forceColor={v > 0 ? 'neg' : 'zero'} />
+                      </td>
+                    ))}
                   </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

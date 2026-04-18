@@ -1,424 +1,373 @@
 import { useMemo } from 'react';
-import { format, startOfMonth, subMonths, endOfMonth } from 'date-fns';
 import {
-  ArrowDownRight,
-  ArrowUpRight,
-  Plus,
-  Wallet,
-  TrendingUp,
-  TrendingDown,
-  PiggyBank,
-} from 'lucide-react';
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  Cell,
-  Pie,
-  PieChart,
   ResponsiveContainer,
-  Tooltip,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
+  Tooltip,
+  CartesianGrid,
+  PieChart,
+  Pie,
+  Cell,
+  BarChart,
+  Bar,
+  Legend,
 } from 'recharts';
+import { TrendingUp, TrendingDown, Wallet, DollarSign, ArrowUpRight, ArrowDownRight, Receipt } from 'lucide-react';
+import { format, subMonths, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
+import { useStore, getAccountBalance, getMonthlyTotals, getTotalBalance } from '../store/useStore';
+import { useI18n } from '../i18n/useI18n';
+import { MoneyText } from '../components/ui/MoneyText';
+import { round2, sum, formatCompact } from '../lib/money';
+import { CATEGORY_COLORS } from '../types';
+import { EmptyState } from '../components/ui/EmptyState';
 import { Link } from 'react-router-dom';
-import { Card } from '../components/ui/Card';
-import { Button } from '../components/ui/Button';
-import { Money } from '../components/ui/Money';
-import { PageHeader } from '../components/layout/PageHeader';
-import { useStore } from '../store/useStore';
-import {
-  classForValue,
-  formatShortCurrency,
-  getTotalBalance,
-  isSameMonth,
-  monthKey,
-  monthLabel,
-} from '../lib/utils';
-import { CATEGORY_COLORS, CATEGORY_EMOJIS } from '../types';
 
-interface DashboardProps {
-  onNewTx: () => void;
-}
+export function Dashboard() {
+  const { t, tc, money, lang } = useI18n();
+  const transactions = useStore((s) => s.transactions);
+  const accounts = useStore((s) => s.accounts);
 
-export function Dashboard({ onNewTx }: DashboardProps) {
-  const accounts = useStore(s => s.accounts);
-  const transactions = useStore(s => s.transactions);
-  const currency = useStore(s => s.settings.currency);
-
+  const now = new Date();
   const totalBalance = getTotalBalance(accounts, transactions);
+  const monthly = getMonthlyTotals(transactions, now.getFullYear(), now.getMonth());
 
-  const today = new Date();
-  const monthTxs = useMemo(
-    () => transactions.filter(t => isSameMonth(t.date, today)),
-    [transactions]
-  );
-
-  const monthIncome = monthTxs
-    .filter(t => t.type === 'income')
-    .reduce((s, t) => s + t.amount, 0);
-  const monthExpenses = monthTxs
-    .filter(t => t.type === 'expense')
-    .reduce((s, t) => s + t.amount, 0);
-  const netMonth = monthIncome - monthExpenses;
-
-  // Balance evolution over last 12 months
-  const balanceEvolution = useMemo(() => {
-    const months: { key: string; label: string; balance: number }[] = [];
+  // ==========================================================
+  // Balance over time: last 12 months
+  // ==========================================================
+  const balanceSeries = useMemo(() => {
+    const series: { month: string; balance: number }[] = [];
     for (let i = 11; i >= 0; i--) {
-      const d = subMonths(today, i);
-      const endIso = endOfMonth(d).toISOString();
-      const txUpTo = transactions.filter(t => t.date <= endIso);
-      const balance = accounts.reduce((acc, a) => {
-        let b = a.initialBalance;
-        for (const t of txUpTo) {
-          if (t.accountId === a.id) {
-            if (t.type === 'income') b += t.amount;
-            else if (t.type === 'expense') b -= t.amount;
-            else if (t.type === 'transfer') b -= t.amount;
-          }
-          if (t.transferToAccountId === a.id && t.type === 'transfer') b += t.amount;
-        }
-        return acc + b;
-      }, 0);
-      months.push({
-        key: monthKey(d),
-        label: monthLabel(monthKey(d)),
-        balance: Math.round(balance * 100) / 100,
+      const monthDate = startOfMonth(subMonths(now, i));
+      const monthEnd = endOfMonth(monthDate);
+      // compute balance at end of this month
+      let bal = sum(accounts.map((a) => a.initialBalance));
+      for (const tx of transactions) {
+        if (tx.tags?.includes('__split_parent')) continue;
+        const d = new Date(tx.date);
+        if (d > monthEnd) continue;
+        if (tx.type === 'income') bal += tx.amount;
+        else if (tx.type === 'expense') bal -= tx.amount;
+      }
+      series.push({
+        month: format(monthDate, 'MMM'),
+        balance: round2(bal),
       });
     }
-    return months;
+    return series;
   }, [transactions, accounts]);
 
-  // Expense breakdown by category (current month)
-  const categoryBreakdown = useMemo(() => {
+  // ==========================================================
+  // Category donut — current month expenses
+  // ==========================================================
+  const categoryData = useMemo(() => {
+    const monthStart = startOfMonth(now);
+    const monthEnd = endOfMonth(now);
     const map: Record<string, number> = {};
-    for (const t of monthTxs) {
-      if (t.type !== 'expense') continue;
-      map[t.category] = (map[t.category] || 0) + t.amount;
+    for (const tx of transactions) {
+      if (tx.tags?.includes('__split_parent')) continue;
+      if (tx.type !== 'expense') continue;
+      const d = new Date(tx.date);
+      if (!isWithinInterval(d, { start: monthStart, end: monthEnd })) continue;
+      map[tx.category] = round2((map[tx.category] || 0) + tx.amount);
     }
     return Object.entries(map)
-      .map(([name, value]) => ({ name, value: Math.round(value * 100) / 100 }))
+      .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
-  }, [monthTxs]);
-
-  const totalCat = categoryBreakdown.reduce((s, c) => s + c.value, 0);
-
-  // Income vs Expenses last 6 months
-  const monthlyIE = useMemo(() => {
-    const out: { key: string; label: string; income: number; expense: number }[] = [];
-    for (let i = 5; i >= 0; i--) {
-      const d = subMonths(today, i);
-      const mk = monthKey(d);
-      const inc = transactions
-        .filter(t => t.type === 'income' && monthKey(t.date) === mk)
-        .reduce((s, t) => s + t.amount, 0);
-      const exp = transactions
-        .filter(t => t.type === 'expense' && monthKey(t.date) === mk)
-        .reduce((s, t) => s + t.amount, 0);
-      out.push({
-        key: mk,
-        label: monthLabel(mk),
-        income: Math.round(inc * 100) / 100,
-        expense: Math.round(exp * 100) / 100,
-      });
-    }
-    return out;
   }, [transactions]);
 
-  const recent = useMemo(
-    () =>
-      [...transactions]
-        .sort((a, b) => (a.date < b.date ? 1 : -1))
-        .slice(0, 10),
-    [transactions]
-  );
-  const accMap = useMemo(
-    () => Object.fromEntries(accounts.map(a => [a.id, a.name])),
-    [accounts]
-  );
+  // ==========================================================
+  // Income vs Expense — last 6 months
+  // ==========================================================
+  const barData = useMemo(() => {
+    const arr: { label: string; income: number; expense: number }[] = [];
+    for (let i = 5; i >= 0; i--) {
+      const d = subMonths(now, i);
+      const mt = getMonthlyTotals(transactions, d.getFullYear(), d.getMonth());
+      arr.push({ label: format(d, 'MMM'), income: mt.income, expense: mt.expense });
+    }
+    return arr;
+  }, [transactions]);
+
+  // ==========================================================
+  // Recent transactions (last 10)
+  // ==========================================================
+  const recent = useMemo(() => {
+    return [...transactions]
+      .filter((tx) => !tx.tags?.includes('__split_parent'))
+      .sort((a, b) => +new Date(b.date) - +new Date(a.date))
+      .slice(0, 10);
+  }, [transactions]);
+
+  const hasData = transactions.length > 0 || accounts.length > 0;
 
   return (
-    <div>
-      <PageHeader
-        title="Dashboard"
-        description={`${format(today, 'EEEE, MMMM d, yyyy')} — your financial overview at a glance.`}
-        actions={
-          <Button icon={<Plus size={16} />} onClick={onNewTx}>
-            New Transaction
-          </Button>
-        }
-      />
+    <div className="animate-fade-in">
+      <header className="mb-6 flex items-end justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold">{t('dashboard.title')}</h1>
+          <p className="text-sm text-muted">{format(now, 'EEEE, MMM d, yyyy')}</p>
+        </div>
+      </header>
 
       {/* KPI row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-        <Card glow={totalBalance >= 0 ? 'pos' : 'neg'} id="kpi-total-balance">
-          <div className="flex justify-between items-start">
-            <div className="text-xs font-medium text-muted uppercase tracking-wide">
-              Total Balance
-            </div>
-            <Wallet size={16} className={classForValue(totalBalance)} />
-          </div>
-          <div className="mt-2">
-            <Money value={totalBalance} className="text-2xl font-semibold" animate />
-          </div>
-          <div className="text-xs text-muted mt-1">Across {accounts.length} accounts</div>
-        </Card>
-
-        <Card glow="pos" id="kpi-income">
-          <div className="flex justify-between items-start">
-            <div className="text-xs font-medium text-muted uppercase tracking-wide">
-              Monthly Income
-            </div>
-            <ArrowUpRight size={16} className="text-pos" />
-          </div>
-          <div className="mt-2">
-            <Money value={monthIncome} className="text-2xl font-semibold" animate />
-          </div>
-          <div className="text-xs text-muted mt-1">
-            {monthTxs.filter(t => t.type === 'income').length} incoming tx
-          </div>
-        </Card>
-
-        <Card glow="neg" id="kpi-expenses">
-          <div className="flex justify-between items-start">
-            <div className="text-xs font-medium text-muted uppercase tracking-wide">
-              Monthly Expenses
-            </div>
-            <ArrowDownRight size={16} className="text-neg" />
-          </div>
-          <div className="mt-2">
-            <Money value={monthExpenses} className="text-2xl font-semibold" animate signInvert />
-          </div>
-          <div className="text-xs text-muted mt-1">
-            {monthTxs.filter(t => t.type === 'expense').length} outgoing tx
-          </div>
-        </Card>
-
-        <Card glow={netMonth >= 0 ? 'pos' : 'neg'} id="kpi-net">
-          <div className="flex justify-between items-start">
-            <div className="text-xs font-medium text-muted uppercase tracking-wide">
-              Net this Month
-            </div>
-            {netMonth >= 0 ? (
-              <TrendingUp size={16} className="text-pos" />
-            ) : (
-              <TrendingDown size={16} className="text-neg" />
-            )}
-          </div>
-          <div className="mt-2">
-            <Money value={netMonth} className="text-2xl font-semibold" animate forceSign />
-          </div>
-          <div className="text-xs text-muted mt-1">
-            Savings rate: {monthIncome > 0 ? Math.round((netMonth / monthIncome) * 100) : 0}%
-          </div>
-        </Card>
+        <KpiCard
+          icon={Wallet}
+          label={t('dashboard.totalBalance')}
+          value={totalBalance}
+          tone="auto"
+        />
+        <KpiCard
+          icon={ArrowUpRight}
+          label={t('dashboard.monthlyIncome')}
+          value={monthly.income}
+          tone="pos"
+        />
+        <KpiCard
+          icon={ArrowDownRight}
+          label={t('dashboard.monthlyExpenses')}
+          value={-monthly.expense}
+          tone="neg"
+          displayAbsolute={false}
+        />
+        <KpiCard
+          icon={DollarSign}
+          label={t('dashboard.netThisMonth')}
+          value={monthly.net}
+          tone="auto"
+        />
       </div>
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        {/* Balance line */}
-        <Card className="lg:col-span-2" id="balance-chart">
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <h2 className="text-base font-semibold">Balance Evolution</h2>
-              <p className="text-xs text-muted mt-0.5">Last 12 months</p>
-            </div>
-            <PiggyBank size={18} className="text-muted" />
+        {/* Line chart */}
+        <div className="card p-5 lg:col-span-2">
+          <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
+            <TrendingUp size={16} className="text-pos" />
+            {t('dashboard.balanceOverTime')}
+          </h3>
+          <div className="h-64">
+            <ResponsiveContainer>
+              <LineChart data={balanceSeries} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="gradBalance" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.3} />
+                    <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+                <XAxis dataKey="month" stroke="var(--text-muted)" />
+                <YAxis stroke="var(--text-muted)" tickFormatter={(v) => formatCompact(v, lang)} />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'var(--bg-surface)',
+                    border: '1px solid var(--border-strong)',
+                    borderRadius: 8,
+                  }}
+                  formatter={(v: number) => money(v)}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="balance"
+                  stroke="#3b82f6"
+                  strokeWidth={2.5}
+                  dot={{ r: 3, fill: '#3b82f6' }}
+                  activeDot={{ r: 5 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
           </div>
-          <ResponsiveContainer width="100%" height={280}>
-            <AreaChart data={balanceEvolution} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id="balGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.35} />
-                  <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <XAxis
-                dataKey="label"
-                stroke="#64748b"
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis
-                stroke="#64748b"
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-                width={70}
-                tickFormatter={(v: number) => formatShortCurrency(v, currency)}
-              />
-              <Tooltip
-                formatter={(v: number) => formatShortCurrency(v, currency)}
-                cursor={{ stroke: '#1e1e2e' }}
-              />
-              <Area
-                type="monotone"
-                dataKey="balance"
-                stroke="#3b82f6"
-                strokeWidth={2}
-                fill="url(#balGradient)"
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </Card>
+        </div>
 
-        {/* Donut */}
-        <Card id="category-donut">
-          <div className="mb-4">
-            <h2 className="text-base font-semibold">Expense Breakdown</h2>
-            <p className="text-xs text-muted mt-0.5">This month by category</p>
-          </div>
-          {categoryBreakdown.length > 0 ? (
-            <>
-              <div className="relative">
-                <ResponsiveContainer width="100%" height={180}>
-                  <PieChart>
-                    <Pie
-                      data={categoryBreakdown}
-                      dataKey="value"
-                      innerRadius={55}
-                      outerRadius={80}
-                      paddingAngle={2}
-                      stroke="none"
-                    >
-                      {categoryBreakdown.map((c, i) => (
-                        <Cell key={i} fill={CATEGORY_COLORS[c.name] || '#64748b'} />
-                      ))}
-                    </Pie>
-                    <Tooltip
-                      formatter={(v: number) => formatShortCurrency(v, currency)}
-                    />
-                  </PieChart>
-                </ResponsiveContainer>
-                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                  <div className="text-[10px] text-muted uppercase tracking-wider">
-                    Total
-                  </div>
-                  <Money
-                    value={-totalCat}
-                    className="text-sm font-semibold"
-                    signInvert
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5 mt-4 max-h-40 overflow-y-auto pr-1">
-                {categoryBreakdown.slice(0, 6).map(c => (
-                  <div key={c.name} className="flex items-center justify-between text-xs">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span
-                        className="w-2 h-2 rounded-full flex-shrink-0"
-                        style={{ background: CATEGORY_COLORS[c.name] || '#64748b' }}
-                      />
-                      <span className="truncate">{c.name}</span>
-                    </div>
-                    <div className="flex items-center gap-2 flex-shrink-0">
-                      <span className="text-muted">
-                        {totalCat > 0 ? ((c.value / totalCat) * 100).toFixed(0) : 0}%
-                      </span>
-                      <Money value={-c.value} className="font-medium" signInvert />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
+        {/* Donut chart */}
+        <div className="card p-5">
+          <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
+            <TrendingDown size={16} className="text-neg" />
+            {t('dashboard.expenseByCategory')}
+          </h3>
+          {categoryData.length === 0 ? (
+            <div className="h-64 flex items-center justify-center text-sm text-muted">
+              {t('common.empty')}
+            </div>
           ) : (
-            <div className="py-10 text-center text-sm text-muted">
-              No expenses this month yet.
+            <div className="h-64">
+              <ResponsiveContainer>
+                <PieChart>
+                  <Pie
+                    data={categoryData}
+                    innerRadius={55}
+                    outerRadius={85}
+                    paddingAngle={2}
+                    dataKey="value"
+                  >
+                    {categoryData.map((d) => (
+                      <Cell
+                        key={d.name}
+                        fill={CATEGORY_COLORS[d.name] || '#64748b'}
+                        stroke="var(--bg-surface)"
+                        strokeWidth={2}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'var(--bg-surface)',
+                      border: '1px solid var(--border-strong)',
+                      borderRadius: 8,
+                    }}
+                    formatter={(v: number, _n: any, p: any) => [money(v), tc(p.payload.name)]}
+                  />
+                </PieChart>
+              </ResponsiveContainer>
             </div>
           )}
-        </Card>
+          {categoryData.length > 0 && (
+            <div className="mt-3 space-y-1 max-h-32 overflow-y-auto pr-1">
+              {categoryData.slice(0, 4).map((d) => (
+                <div key={d.name} className="flex items-center justify-between text-xs">
+                  <span className="flex items-center gap-2 min-w-0">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full flex-shrink-0"
+                      style={{ background: CATEGORY_COLORS[d.name] || '#64748b' }}
+                    />
+                    <span className="truncate">{tc(d.name)}</span>
+                  </span>
+                  <MoneyText value={-d.value} colored size="sm" />
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* Income vs Expenses + Recent */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="lg:col-span-2" id="income-expense-chart">
-          <div className="mb-4">
-            <h2 className="text-base font-semibold">Income vs Expenses</h2>
-            <p className="text-xs text-muted mt-0.5">Last 6 months</p>
-          </div>
-          <ResponsiveContainer width="100%" height={260}>
-            <BarChart data={monthlyIE} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-              <XAxis
-                dataKey="label"
-                stroke="#64748b"
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-              />
-              <YAxis
-                stroke="#64748b"
-                fontSize={11}
-                tickLine={false}
-                axisLine={false}
-                width={70}
-                tickFormatter={(v: number) => formatShortCurrency(v, currency)}
-              />
+      {/* Bar chart */}
+      <div className="card p-5 mb-6">
+        <h3 className="text-sm font-semibold mb-4">{t('dashboard.incomeVsExpenses')}</h3>
+        <div className="h-60">
+          <ResponsiveContainer>
+            <BarChart data={barData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+              <XAxis dataKey="label" stroke="var(--text-muted)" />
+              <YAxis stroke="var(--text-muted)" tickFormatter={(v) => formatCompact(v, lang)} />
               <Tooltip
-                formatter={(v: number) => formatShortCurrency(v, currency)}
-                cursor={{ fill: 'rgba(255,255,255,0.03)' }}
+                contentStyle={{
+                  backgroundColor: 'var(--bg-surface)',
+                  border: '1px solid var(--border-strong)',
+                  borderRadius: 8,
+                }}
+                formatter={(v: number) => money(v)}
               />
-              <Bar dataKey="income" fill="#3b82f6" radius={[4, 4, 0, 0]} maxBarSize={40} />
-              <Bar dataKey="expense" fill="#ef4444" radius={[4, 4, 0, 0]} maxBarSize={40} />
+              <Legend
+                formatter={(val: string) =>
+                  val === 'income' ? t('common.income') : t('common.expense')
+                }
+              />
+              <Bar dataKey="income" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="expense" fill="#ef4444" radius={[4, 4, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
-        </Card>
+        </div>
+      </div>
 
-        <Card id="recent-transactions">
-          <div className="flex justify-between items-center mb-4">
-            <div>
-              <h2 className="text-base font-semibold">Recent Activity</h2>
-              <p className="text-xs text-muted mt-0.5">Last 10 transactions</p>
-            </div>
-            <Link
-              to="/transactions"
-              className="text-xs text-pos hover:underline font-medium"
-            >
-              View all
-            </Link>
-          </div>
-          <div className="space-y-2">
-            {recent.length === 0 && (
-              <div className="py-4 text-center text-sm text-muted">
-                No transactions yet
-              </div>
-            )}
-            {recent.map(t => {
-              const signed =
-                t.type === 'income'
-                  ? t.amount
-                  : t.type === 'expense'
-                  ? -t.amount
-                  : 0;
+      {/* Recent transactions */}
+      <div className="card p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-semibold">{t('dashboard.recentTransactions')}</h3>
+          <Link to="/transactions" className="text-xs text-pos hover:underline">
+            {t('common.all')} →
+          </Link>
+        </div>
+        {recent.length === 0 ? (
+          <EmptyState
+            icon={Receipt}
+            title={t('dashboard.noTransactions')}
+            description={t('dashboard.startByAdding')}
+            action={
+              <Link to="/transactions" className="btn btn-primary">
+                {t('transactions.new')}
+              </Link>
+            }
+          />
+        ) : (
+          <div className="divide-y divide-border">
+            {recent.map((tx) => {
+              const acc = accounts.find((a) => a.id === tx.accountId);
+              const sign = tx.type === 'income' ? 1 : tx.type === 'expense' ? -1 : 0;
               return (
-                <div
-                  key={t.id}
-                  className="flex items-center justify-between gap-3 py-1.5"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div className="w-8 h-8 rounded-lg bg-surface-hover flex items-center justify-center text-sm flex-shrink-0">
-                      {CATEGORY_EMOJIS[t.category] || '💳'}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm truncate">{t.description}</div>
-                      <div className="text-[11px] text-muted truncate">
-                        {format(new Date(t.date), 'MMM d')} · {accMap[t.accountId]}
-                      </div>
+                <div key={tx.id} className="flex items-center gap-3 py-2.5">
+                  <div
+                    className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
+                    style={{
+                      background:
+                        sign > 0 ? 'rgba(59,130,246,0.12)' : 'rgba(239,68,68,0.12)',
+                      color: sign > 0 ? '#3b82f6' : '#ef4444',
+                    }}
+                  >
+                    {sign > 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">{tx.description}</div>
+                    <div className="text-[11px] text-muted flex gap-2">
+                      <span>{tc(tx.category)}</span>
+                      {acc && (
+                        <>
+                          <span>·</span>
+                          <span>{acc.name}</span>
+                        </>
+                      )}
+                      <span>·</span>
+                      <span>{format(new Date(tx.date), 'dd MMM')}</span>
                     </div>
                   </div>
-                  <Money
-                    value={signed}
-                    className="text-sm font-medium flex-shrink-0"
-                    forceSign
+                  <MoneyText
+                    value={sign * tx.amount}
+                    size="sm"
+                    className="font-semibold"
                   />
                 </div>
               );
             })}
           </div>
-        </Card>
+        )}
       </div>
+    </div>
+  );
+}
+
+interface KpiProps {
+  icon: any;
+  label: string;
+  value: number;
+  tone: 'pos' | 'neg' | 'auto';
+  displayAbsolute?: boolean;
+}
+
+function KpiCard({ icon: Icon, label, value, tone, displayAbsolute }: KpiProps) {
+  const toneClass =
+    tone === 'pos' ? 'card-pos' : tone === 'neg' ? 'card-neg' : value < 0 ? 'card-neg' : 'card-pos';
+  const iconColor = tone === 'pos' ? 'text-pos' : tone === 'neg' ? 'text-neg' : value < 0 ? 'text-neg' : 'text-pos';
+  const iconBg = tone === 'pos' ? 'bg-pos-soft' : tone === 'neg' ? 'bg-neg-soft' : value < 0 ? 'bg-neg-soft' : 'bg-pos-soft';
+
+  const forceColor = tone === 'pos' ? 'pos' : tone === 'neg' ? 'neg' : undefined;
+
+  return (
+    <div className={`card ${toneClass} p-5 transition-all`}>
+      <div className="flex items-start justify-between mb-3">
+        <span className="text-[11px] uppercase tracking-wider text-muted font-medium">
+          {label}
+        </span>
+        <div className={`w-8 h-8 rounded-lg ${iconBg} flex items-center justify-center`}>
+          <Icon size={15} className={iconColor} />
+        </div>
+      </div>
+      <MoneyText
+        value={displayAbsolute === false ? value : value}
+        animate
+        size="xl"
+        forceColor={forceColor}
+      />
     </div>
   );
 }

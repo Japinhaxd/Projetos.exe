@@ -1,325 +1,381 @@
-import { useMemo, useRef, useState } from 'react';
-import { format } from 'date-fns';
+import { useState } from 'react';
 import {
-  Database,
+  Sun,
+  Moon,
+  Globe,
+  User as UserIcon,
+  LogOut,
   Download,
-  RefreshCw,
-  Repeat,
-  Trash2,
   Upload,
+  Trash2,
+  Link2,
+  Eye,
+  EyeOff,
+  HelpCircle,
+  Repeat,
+  Flame,
 } from 'lucide-react';
-import { Card } from '../components/ui/Card';
-import { Button } from '../components/ui/Button';
-import { Field, Select } from '../components/ui/Input';
-import { Confirm } from '../components/ui/Modal';
-import { Money } from '../components/ui/Money';
-import { Badge } from '../components/ui/Badge';
-import { PageHeader } from '../components/layout/PageHeader';
-import { EmptyState } from '../components/layout/EmptyState';
 import { useStore } from '../store/useStore';
-import { CATEGORY_EMOJIS } from '../types';
-import { downloadFile, signedAmount } from '../lib/utils';
+import { useI18n } from '../i18n/useI18n';
+import { LANG_META } from '../i18n/translations';
+import type { FirebaseConfig, SupportedLanguage, Theme } from '../types';
+import { Confirm } from '../components/ui/Confirm';
+import { format } from 'date-fns';
+import { firebaseLogout, validateFirebaseConfig } from '../lib/firebase';
+import { MoneyText } from '../components/ui/MoneyText';
 
 export function Settings() {
-  const accounts = useStore(s => s.accounts);
-  const transactions = useStore(s => s.transactions);
-  const budgets = useStore(s => s.budgets);
-  const settings = useStore(s => s.settings);
-  const setSettings = useStore(s => s.setSettings);
-  const importAll = useStore(s => s.importAll);
-  const clearAll = useStore(s => s.clearAll);
-  const resetSeed = useStore(s => s.resetSeed);
-  const pushToast = useStore(s => s.pushToast);
-  const removeTransaction = useStore(s => s.removeTransaction);
+  const { t, tc } = useI18n();
+  const theme = useStore((s) => s.theme);
+  const setTheme = useStore((s) => s.setTheme);
+  const lang = useStore((s) => s.lang);
+  const setLang = useStore((s) => s.setLang);
+  const user = useStore((s) => s.user);
+  const setUser = useStore((s) => s.setUser);
+  const firebaseConfig = useStore((s) => s.firebaseConfig);
+  const setFirebaseConfig = useStore((s) => s.setFirebaseConfig);
+  const pluggyCreds = useStore((s) => s.pluggyCreds);
+  const setPluggyCreds = useStore((s) => s.setPluggyCreds);
+  const transactions = useStore((s) => s.transactions);
+  const accounts = useStore((s) => s.accounts);
+  const budgets = useStore((s) => s.budgets);
+  const replaceAll = useStore((s) => s.replaceAll);
+  const clearAll = useStore((s) => s.clearAll);
+  const deleteTransaction = useStore((s) => s.deleteTransaction);
+  const pushToast = useStore((s) => s.pushToast);
 
-  const fileInput = useRef<HTMLInputElement>(null);
-  const [confirmClear, setConfirmClear] = useState(false);
-  const [confirmReset, setConfirmReset] = useState(false);
-
-  const accMap = useMemo(
-    () => Object.fromEntries(accounts.map(a => [a.id, a.name])),
-    [accounts]
+  const [firebaseText, setFirebaseText] = useState(
+    firebaseConfig ? JSON.stringify(firebaseConfig, null, 2) : '',
   );
+  const [pluggyId, setPluggyId] = useState(pluggyCreds?.clientId || '');
+  const [pluggySecret, setPluggySecret] = useState(pluggyCreds?.clientSecret || '');
+  const [showSecret, setShowSecret] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
+
+  const recurring = transactions.filter(
+    (t) => t.recurrence !== 'none' && !t.tags?.includes('__split_parent'),
+  );
+
+  // ==========================================================
+  // Actions
+  // ==========================================================
+  function handleSaveFirebase() {
+    if (!firebaseText.trim()) {
+      setFirebaseConfig(null);
+      pushToast({ type: 'info', message: t('toast.saved') });
+      return;
+    }
+    const parsed: FirebaseConfig | null = validateFirebaseConfig(firebaseText);
+    if (!parsed) {
+      pushToast({ type: 'error', message: t('toast.invalidFirebase') });
+      return;
+    }
+    setFirebaseConfig(parsed);
+    pushToast({ type: 'success', message: t('toast.saved') });
+  }
+
+  function handleSavePluggy() {
+    if (!pluggyId || !pluggySecret) {
+      setPluggyCreds(null);
+      pushToast({ type: 'info', message: t('toast.saved') });
+      return;
+    }
+    setPluggyCreds({ clientId: pluggyId, clientSecret: pluggySecret });
+    pushToast({ type: 'success', message: t('toast.saved') });
+  }
 
   function handleExport() {
     const payload = {
       version: 1,
       exportedAt: new Date().toISOString(),
-      accounts,
       transactions,
+      accounts,
       budgets,
-      settings,
     };
-    const fn = `finance-os-backup-${format(new Date(), 'yyyy-MM-dd')}.json`;
-    downloadFile(fn, JSON.stringify(payload, null, 2));
-    pushToast('success', 'Backup exported');
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json',
+    });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `financeOS_backup_${format(new Date(), 'yyyy-MM-dd')}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    pushToast({ type: 'success', message: t('toast.exported') });
   }
 
   function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = (ev) => {
       try {
-        const data = JSON.parse(String(reader.result));
-        if (!Array.isArray(data.accounts) || !Array.isArray(data.transactions)) {
-          throw new Error('Invalid format');
+        const obj = JSON.parse(String(ev.target?.result));
+        if (!Array.isArray(obj.transactions) || !Array.isArray(obj.accounts)) {
+          throw new Error('Invalid shape');
         }
-        importAll({
-          accounts: data.accounts,
-          transactions: data.transactions,
-          budgets: data.budgets || [],
-          settings: data.settings,
+        replaceAll({
+          transactions: obj.transactions,
+          accounts: obj.accounts,
+          budgets: obj.budgets || [],
         });
-      } catch (err) {
-        pushToast('error', 'Invalid backup file');
+        pushToast({ type: 'success', message: t('toast.imported') });
+      } catch {
+        pushToast({ type: 'error', message: t('toast.invalidJSON') });
       }
     };
     reader.readAsText(file);
     e.target.value = '';
   }
 
-  const recurring = useMemo(
-    () => transactions.filter(t => t.recurrence !== 'none'),
-    [transactions]
-  );
+  async function handleLogout() {
+    await firebaseLogout();
+    setUser(null);
+    pushToast({ type: 'info', message: t('toast.loggedOut') });
+  }
 
   return (
-    <div>
-      <PageHeader
-        title="Settings"
-        description="Configure preferences, manage data and review recurring transactions."
-      />
+    <div className="animate-fade-in max-w-3xl">
+      <header className="mb-6">
+        <h1 className="text-2xl font-bold">{t('settings.title')}</h1>
+      </header>
 
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        {/* Preferences */}
-        <Card>
-          <h2 className="text-base font-semibold mb-4">Preferences</h2>
-          <div className="space-y-4">
-            <Field label="Currency">
-              <Select
-                value={settings.currency}
-                onChange={e => setSettings({ currency: e.target.value })}
-              >
-                <option value="BRL">Brazilian Real (R$)</option>
-                <option value="USD">US Dollar ($)</option>
-                <option value="EUR">Euro (€)</option>
-                <option value="GBP">British Pound (£)</option>
-                <option value="JPY">Japanese Yen (¥)</option>
-              </Select>
-            </Field>
-            <Field label="Date Format">
-              <Select
-                value={settings.dateFormat}
-                onChange={e =>
-                  setSettings({ dateFormat: e.target.value as any })
-                }
-              >
-                <option value="dd/MM/yyyy">DD/MM/YYYY (e.g. 31/12/2025)</option>
-                <option value="MM/dd/yyyy">MM/DD/YYYY (e.g. 12/31/2025)</option>
-                <option value="yyyy-MM-dd">YYYY-MM-DD (e.g. 2025-12-31)</option>
-              </Select>
-            </Field>
-          </div>
-        </Card>
-
-        {/* Data */}
-        <Card>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold">Data Management</h2>
-            <Database size={18} className="text-muted" />
-          </div>
-          <div className="grid grid-cols-2 gap-3 mb-4 text-sm">
-            <div className="bg-surface-hover/50 border border-border rounded-lg p-3">
-              <div className="text-[11px] text-muted uppercase tracking-wide">
-                Transactions
-              </div>
-              <div className="text-xl font-semibold mt-0.5 tabular-nums">
-                {transactions.length}
+      <div className="space-y-6">
+        {/* ========== APPEARANCE ========== */}
+        <Section icon={Sun} title={t('settings.appearance')}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              {theme === 'dark' ? <Moon size={18} /> : <Sun size={18} />}
+              <div>
+                <div className="text-sm font-medium">
+                  {theme === 'dark' ? t('settings.themeDark') : t('settings.themeLight')}
+                </div>
+                <div className="text-xs text-muted">
+                  {theme === 'dark' ? '🌙' : '☀️'} {t('settings.appearance')}
+                </div>
               </div>
             </div>
-            <div className="bg-surface-hover/50 border border-border rounded-lg p-3">
-              <div className="text-[11px] text-muted uppercase tracking-wide">
-                Accounts
-              </div>
-              <div className="text-xl font-semibold mt-0.5 tabular-nums">
-                {accounts.length}
-              </div>
-            </div>
-            <div className="bg-surface-hover/50 border border-border rounded-lg p-3">
-              <div className="text-[11px] text-muted uppercase tracking-wide">
-                Budgets
-              </div>
-              <div className="text-xl font-semibold mt-0.5 tabular-nums">
-                {budgets.length}
-              </div>
-            </div>
-            <div className="bg-surface-hover/50 border border-border rounded-lg p-3">
-              <div className="text-[11px] text-muted uppercase tracking-wide">
-                Recurring
-              </div>
-              <div className="text-xl font-semibold mt-0.5 tabular-nums">
-                {recurring.length}
-              </div>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <Button
-              variant="secondary"
-              icon={<Download size={15} />}
-              onClick={handleExport}
-            >
-              Export JSON
-            </Button>
-            <Button
-              variant="secondary"
-              icon={<Upload size={15} />}
-              onClick={() => fileInput.current?.click()}
-            >
-              Import JSON
-            </Button>
-            <input
-              ref={fileInput}
-              type="file"
-              accept=".json,application/json"
-              className="hidden"
-              onChange={handleImport}
+            <button
+              aria-label="Toggle theme"
+              onClick={() => setTheme((theme === 'dark' ? 'light' : 'dark') as Theme)}
+              className={`toggle ${theme === 'light' ? 'active' : ''}`}
             />
-            <Button
-              variant="secondary"
-              icon={<RefreshCw size={15} />}
-              onClick={() => setConfirmReset(true)}
-            >
-              Reset to Seed
-            </Button>
-            <Button
-              variant="danger"
-              icon={<Trash2 size={15} />}
-              onClick={() => setConfirmClear(true)}
-            >
-              Clear All Data
-            </Button>
           </div>
-        </Card>
+        </Section>
+
+        {/* ========== LANGUAGE ========== */}
+        <Section icon={Globe} title={t('settings.language')}>
+          <select
+            className="input"
+            value={lang}
+            onChange={(e) => setLang(e.target.value as SupportedLanguage)}
+          >
+            {LANG_META.map((l) => (
+              <option key={l.code} value={l.code}>
+                {l.flag} {l.native} ({l.code})
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-muted mt-2">
+            Sample: <MoneyText value={1500} size="sm" colored={false} />
+          </p>
+        </Section>
+
+        {/* ========== ACCOUNT ========== */}
+        <Section icon={UserIcon} title={t('settings.account')}>
+          {user ? (
+            <div className="flex items-center gap-4">
+              {user.photoURL ? (
+                <img src={user.photoURL} alt="" className="w-12 h-12 rounded-full" />
+              ) : (
+                <div className="w-12 h-12 rounded-full bg-pos-soft flex items-center justify-center">
+                  <UserIcon size={20} className="text-pos" />
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <div className="font-medium truncate">{user.displayName}</div>
+                <div className="text-xs text-muted truncate">
+                  {user.provider === 'local'
+                    ? t('settings.localModeActive')
+                    : `${t('settings.loggedInAs')} · ${user.email}`}
+                </div>
+              </div>
+              <button className="btn btn-ghost" onClick={handleLogout}>
+                <LogOut size={14} />
+                {t('app.logout')}
+              </button>
+            </div>
+          ) : (
+            <p className="text-sm text-muted">{t('settings.notLoggedIn')}</p>
+          )}
+        </Section>
+
+        {/* ========== INTEGRATIONS ========== */}
+        <Section icon={Link2} title={t('settings.integrations')}>
+          {/* Firebase */}
+          <div className="mb-6">
+            <label className="block text-xs font-medium text-muted mb-1.5">
+              {t('settings.firebaseConfig')}
+            </label>
+            <textarea
+              className="input font-mono text-xs"
+              rows={6}
+              placeholder='{"apiKey": "...", "authDomain": "..."}'
+              value={firebaseText}
+              onChange={(e) => setFirebaseText(e.target.value)}
+            />
+            <p className="text-[11px] text-muted mt-1.5 flex items-start gap-1.5">
+              <HelpCircle size={12} className="flex-shrink-0 mt-0.5" />
+              {t('settings.firebaseHelp')}
+            </p>
+            <button
+              className="btn btn-ghost mt-2"
+              onClick={handleSaveFirebase}
+            >
+              {t('common.save')}
+            </button>
+          </div>
+
+          {/* Pluggy */}
+          <div className="pt-4 border-t border-border">
+            <div className="text-sm font-medium mb-3">{t('settings.pluggyKeys')}</div>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-muted mb-1.5">
+                  {t('settings.pluggyClientId')}
+                </label>
+                <input
+                  className="input font-mono text-xs"
+                  value={pluggyId}
+                  onChange={(e) => setPluggyId(e.target.value)}
+                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted mb-1.5">
+                  {t('settings.pluggyClientSecret')}
+                </label>
+                <div className="relative">
+                  <input
+                    className="input font-mono text-xs pr-10"
+                    type={showSecret ? 'text' : 'password'}
+                    value={pluggySecret}
+                    onChange={(e) => setPluggySecret(e.target.value)}
+                    placeholder="••••••••"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  <button
+                    className="absolute right-2 top-1/2 -translate-y-1/2 btn-icon"
+                    onClick={() => setShowSecret((v) => !v)}
+                    type="button"
+                  >
+                    {showSecret ? <EyeOff size={14} /> : <Eye size={14} />}
+                  </button>
+                </div>
+              </div>
+              <p className="text-[11px] text-muted flex items-start gap-1.5">
+                <HelpCircle size={12} className="flex-shrink-0 mt-0.5" />
+                {t('settings.pluggyHelp')}
+              </p>
+              <button className="btn btn-ghost" onClick={handleSavePluggy}>
+                {t('common.save')}
+              </button>
+            </div>
+          </div>
+        </Section>
+
+        {/* ========== DATA ========== */}
+        <Section icon={Download} title={t('settings.data')}>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn btn-ghost" onClick={handleExport}>
+              <Download size={14} />
+              {t('settings.exportJSON')}
+            </button>
+            <label className="btn btn-ghost cursor-pointer">
+              <Upload size={14} />
+              {t('settings.importJSON')}
+              <input
+                type="file"
+                accept="application/json"
+                className="hidden"
+                onChange={handleImport}
+              />
+            </label>
+            <button className="btn btn-danger ml-auto" onClick={() => setConfirmClear(true)}>
+              <Trash2 size={14} />
+              {t('settings.clearData')}
+            </button>
+          </div>
+        </Section>
+
+        {/* ========== RECURRING ========== */}
+        <Section icon={Repeat} title={t('settings.recurring')}>
+          {recurring.length === 0 ? (
+            <p className="text-sm text-muted">{t('settings.noRecurring')}</p>
+          ) : (
+            <div className="divide-y divide-border">
+              {recurring.map((tx) => {
+                const sign = tx.type === 'income' ? 1 : -1;
+                return (
+                  <div key={tx.id} className="flex items-center gap-3 py-2.5">
+                    <div className="badge badge-muted">
+                      {t(`common.${tx.recurrence}` as any)}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium truncate">{tx.description}</div>
+                      <div className="text-[11px] text-muted">{tc(tx.category)}</div>
+                    </div>
+                    <MoneyText value={sign * tx.amount} size="sm" />
+                    <button
+                      className="btn-icon hover:text-neg"
+                      onClick={() => {
+                        deleteTransaction(tx.id);
+                        pushToast({ type: 'success', message: t('toast.deleted') });
+                      }}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Section>
       </div>
 
-      {/* Recurring manager */}
-      <Card>
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-base font-semibold">Recurring Transactions</h2>
-            <p className="text-xs text-muted mt-0.5">
-              Transactions that repeat automatically on a schedule
-            </p>
-          </div>
-          <Repeat size={18} className="text-muted" />
-        </div>
-
-        {recurring.length === 0 ? (
-          <EmptyState
-            icon={<Repeat size={20} />}
-            title="No recurring transactions"
-            description="Set a recurrence on any transaction to track fixed income or expenses."
-          />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border text-[11px] uppercase tracking-wider text-muted">
-                  <th className="text-left py-2 px-3">Description</th>
-                  <th className="text-left py-2 px-3">Category</th>
-                  <th className="text-left py-2 px-3">Account</th>
-                  <th className="text-left py-2 px-3">Frequency</th>
-                  <th className="text-right py-2 px-3">Amount</th>
-                  <th className="w-16"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {recurring.map(t => (
-                  <tr key={t.id} className="border-b border-border/50 hover:bg-surface-hover">
-                    <td className="py-2.5 px-3">
-                      <div className="flex items-center gap-2">
-                        <span>{CATEGORY_EMOJIS[t.category] || '🔁'}</span>
-                        <span className="truncate">{t.description}</span>
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-3 text-muted">{t.category}</td>
-                    <td className="py-2.5 px-3 text-muted">{accMap[t.accountId]}</td>
-                    <td className="py-2.5 px-3">
-                      <Badge variant="muted" className="capitalize">
-                        {t.recurrence}
-                      </Badge>
-                    </td>
-                    <td className="py-2.5 px-3 text-right tabular-nums">
-                      <Money value={signedAmount(t)} forceSign />
-                    </td>
-                    <td className="py-2.5 px-3 text-right">
-                      <button
-                        onClick={() => removeTransaction(t.id)}
-                        className="p-1.5 text-muted hover:text-neg hover:bg-surface rounded"
-                        title="Remove"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      {/* Shortcuts info */}
-      <Card className="mt-4">
-        <h2 className="text-base font-semibold mb-3">Keyboard Shortcuts</h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-          <div className="flex items-center justify-between py-1.5 px-3 bg-surface-hover/50 rounded-lg">
-            <span className="text-muted">New transaction</span>
-            <kbd className="px-2 py-0.5 bg-surface border border-border rounded text-xs">
-              N
-            </kbd>
-          </div>
-          <div className="flex items-center justify-between py-1.5 px-3 bg-surface-hover/50 rounded-lg">
-            <span className="text-muted">Focus search</span>
-            <kbd className="px-2 py-0.5 bg-surface border border-border rounded text-xs">
-              F
-            </kbd>
-          </div>
-          <div className="flex items-center justify-between py-1.5 px-3 bg-surface-hover/50 rounded-lg">
-            <span className="text-muted">Close drawer / modal</span>
-            <kbd className="px-2 py-0.5 bg-surface border border-border rounded text-xs">
-              Esc
-            </kbd>
-          </div>
-        </div>
-      </Card>
-
-      {/* Dialogs */}
       <Confirm
         open={confirmClear}
-        title="Clear all data?"
-        message="This will permanently remove all accounts, transactions and budgets. This action cannot be undone."
-        confirmText="Clear Everything"
-        onCancel={() => setConfirmClear(false)}
+        title={t('settings.clearConfirm')}
+        description={t('settings.clearConfirmDesc')}
         onConfirm={() => {
           clearAll();
-          setConfirmClear(false);
+          pushToast({ type: 'success', message: t('toast.cleared') });
         }}
-      />
-      <Confirm
-        open={confirmReset}
-        title="Restore seed data?"
-        message="This replaces all current data with the default demo dataset. Current data will be lost."
-        confirmText="Restore Seed"
-        danger={false}
-        onCancel={() => setConfirmReset(false)}
-        onConfirm={() => {
-          resetSeed();
-          setConfirmReset(false);
-        }}
+        onClose={() => setConfirmClear(false)}
       />
     </div>
+  );
+}
+
+function Section({
+  icon: Icon,
+  title,
+  children,
+}: {
+  icon: any;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="card p-5">
+      <div className="flex items-center gap-2 mb-4">
+        <Icon size={16} className="text-pos" />
+        <h2 className="text-sm font-semibold uppercase tracking-wider">{title}</h2>
+      </div>
+      {children}
+    </section>
   );
 }

@@ -1,450 +1,303 @@
 import { useMemo } from 'react';
-import { addDays, addMonths, addWeeks, format, isBefore, startOfDay } from 'date-fns';
 import {
-  Area,
-  AreaChart,
-  Bar,
   BarChart,
-  Cell,
-  ReferenceLine,
+  Bar,
   ResponsiveContainer,
-  Tooltip,
   XAxis,
   YAxis,
+  Tooltip,
+  CartesianGrid,
+  Cell,
+  LineChart,
+  Line,
+  ReferenceLine,
 } from 'recharts';
-import { ArrowDownRight, ArrowUpRight, Calendar, Clock } from 'lucide-react';
-import { Card } from '../components/ui/Card';
-import { Money } from '../components/ui/Money';
-import { Badge } from '../components/ui/Badge';
-import { PageHeader } from '../components/layout/PageHeader';
-import { useStore } from '../store/useStore';
-import {
-  dayKey,
-  formatShortCurrency,
-  getTotalBalance,
-  isSameMonth,
-  signedAmount,
-} from '../lib/utils';
-import { CATEGORY_COLORS, CATEGORY_EMOJIS, Transaction } from '../types';
-
-function nextOccurrence(tx: Transaction, after: Date): Date | null {
-  if (tx.recurrence === 'none') return null;
-  let d = new Date(tx.date);
-  const step = tx.recurrence;
-  // Loop forward to the first occurrence >= after
-  for (let i = 0; i < 400; i++) {
-    if (!isBefore(d, after)) return d;
-    if (step === 'daily') d = addDays(d, 1);
-    else if (step === 'weekly') d = addWeeks(d, 1);
-    else if (step === 'monthly') d = addMonths(d, 1);
-    else return null;
-  }
-  return null;
-}
+import { addDays, format, startOfMonth, endOfMonth, isWithinInterval } from 'date-fns';
+import { ArrowRightLeft, Calendar, TrendingUp } from 'lucide-react';
+import { useStore, getTotalBalance } from '../store/useStore';
+import { useI18n } from '../i18n/useI18n';
+import { MoneyText } from '../components/ui/MoneyText';
+import { CATEGORY_COLORS } from '../types';
+import { round2, formatCompact } from '../lib/money';
 
 export function CashFlow() {
-  const transactions = useStore(s => s.transactions);
-  const accounts = useStore(s => s.accounts);
-  const currency = useStore(s => s.settings.currency);
-  const today = startOfDay(new Date());
+  const { t, tc, money, lang } = useI18n();
+  const transactions = useStore((s) => s.transactions);
+  const accounts = useStore((s) => s.accounts);
 
-  // Waterfall: current month income by category → expenses by category → net
+  const now = new Date();
+  const monthStart = startOfMonth(now);
+  const monthEnd = endOfMonth(now);
+
+  // ==========================================================
+  // Waterfall data — current month
+  // ==========================================================
   const waterfall = useMemo(() => {
-    const monthTx = transactions.filter(t => isSameMonth(t.date, today));
-    const incomeByCat: Record<string, number> = {};
-    const expByCat: Record<string, number> = {};
-    for (const t of monthTx) {
-      if (t.type === 'income') incomeByCat[t.category] = (incomeByCat[t.category] || 0) + t.amount;
-      else if (t.type === 'expense')
-        expByCat[t.category] = (expByCat[t.category] || 0) + t.amount;
+    let income = 0;
+    const catMap: Record<string, number> = {};
+    for (const tx of transactions) {
+      if (tx.tags?.includes('__split_parent')) continue;
+      const d = new Date(tx.date);
+      if (!isWithinInterval(d, { start: monthStart, end: monthEnd })) continue;
+      if (tx.type === 'income') income += tx.amount;
+      else if (tx.type === 'expense')
+        catMap[tx.category] = round2((catMap[tx.category] || 0) + tx.amount);
     }
-    const totalInc = Object.values(incomeByCat).reduce((s, v) => s + v, 0);
-    const totalExp = Object.values(expByCat).reduce((s, v) => s + v, 0);
-    const net = totalInc - totalExp;
+    income = round2(income);
+    const expenses = Object.entries(catMap).map(([name, value]) => ({ name, value }));
+    expenses.sort((a, b) => b.value - a.value);
+    const net = round2(income - expenses.reduce((a, b) => a + b.value, 0));
 
-    // Build bars: income bars (positive), then expense bars (negative), then net marker
-    let running = 0;
-    const bars: {
+    const data: {
       name: string;
-      start: number;
-      end: number;
-      value: number;
-      type: 'inflow' | 'outflow' | 'net';
+      positive?: number;
+      negative?: number;
       color: string;
+      key: string;
     }[] = [];
-
-    const incomeEntries = Object.entries(incomeByCat).sort((a, b) => b[1] - a[1]);
-    for (const [cat, v] of incomeEntries) {
-      bars.push({
-        name: cat,
-        start: running,
-        end: running + v,
-        value: v,
-        type: 'inflow',
-        color: CATEGORY_COLORS[cat] || '#3b82f6',
-      });
-      running += v;
-    }
-    const expenseEntries = Object.entries(expByCat).sort((a, b) => b[1] - a[1]);
-    for (const [cat, v] of expenseEntries) {
-      bars.push({
-        name: cat,
-        start: running - v,
-        end: running,
-        value: -v,
-        type: 'outflow',
-        color: CATEGORY_COLORS[cat] || '#ef4444',
-      });
-      running -= v;
-    }
-    // Net marker
-    bars.push({
-      name: 'Net',
-      start: 0,
-      end: net,
-      value: net,
-      type: 'net',
-      color: net >= 0 ? '#3b82f6' : '#ef4444',
+    data.push({
+      name: t('common.income'),
+      positive: income,
+      color: '#3b82f6',
+      key: 'income',
     });
+    for (const e of expenses) {
+      data.push({
+        name: tc(e.name),
+        negative: e.value,
+        color: CATEGORY_COLORS[e.name] || '#ef4444',
+        key: e.name,
+      });
+    }
+    data.push({
+      name: t('common.net'),
+      positive: net >= 0 ? net : undefined,
+      negative: net < 0 ? Math.abs(net) : undefined,
+      color: net >= 0 ? '#3b82f6' : '#ef4444',
+      key: 'net',
+    });
+    return { data, income, net, expenses };
+  }, [transactions, monthStart, monthEnd, t, tc]);
 
-    return { bars, totalInc, totalExp, net };
-  }, [transactions]);
-
-  // Projected balance for next 30 days using recurring
+  // ==========================================================
+  // Projected balance — next 30 days based on recurring
+  // ==========================================================
   const projection = useMemo(() => {
-    const days: { label: string; date: string; balance: number; change: number }[] = [];
-    const recurring = transactions.filter(t => t.recurrence !== 'none');
-
-    let runningBalance = getTotalBalance(accounts, transactions);
-    for (let i = 0; i < 30; i++) {
-      const d = addDays(today, i);
-      let change = 0;
-      for (const r of recurring) {
-        const next = nextOccurrence(r, addDays(today, 1));
-        if (!next) continue;
-        // Walk through all upcoming occurrences within 30 days
-        let occ: Date | null = next;
-        let guard = 0;
-        while (occ && guard < 40) {
-          if (format(occ, 'yyyy-MM-dd') === dayKey(d)) {
-            change += signedAmount(r);
-          }
-          if (occ > addDays(today, 30)) break;
-          if (r.recurrence === 'daily') occ = addDays(occ, 1);
-          else if (r.recurrence === 'weekly') occ = addWeeks(occ, 1);
-          else if (r.recurrence === 'monthly') occ = addMonths(occ, 1);
-          else break;
-          guard++;
+    const today = getTotalBalance(accounts, transactions);
+    const days: { day: string; balance: number }[] = [];
+    let running = today;
+    // Collect recurring transactions
+    const recurring = transactions.filter(
+      (tx) =>
+        tx.recurrence !== 'none' &&
+        !tx.tags?.includes('__split_parent') &&
+        tx.type !== 'transfer',
+    );
+    for (let i = 0; i <= 30; i++) {
+      const d = addDays(now, i);
+      for (const rec of recurring) {
+        const last = new Date(rec.date);
+        let match = false;
+        if (rec.recurrence === 'daily') match = true;
+        else if (rec.recurrence === 'weekly')
+          match = d.getDay() === last.getDay() && i > 0;
+        else if (rec.recurrence === 'monthly')
+          match = d.getDate() === last.getDate() && i > 0;
+        if (match) {
+          if (rec.type === 'income') running = round2(running + rec.amount);
+          else running = round2(running - rec.amount);
         }
       }
-      runningBalance += change;
-      days.push({
-        label: format(d, 'MMM d'),
-        date: dayKey(d),
-        balance: Math.round(runningBalance * 100) / 100,
-        change: Math.round(change * 100) / 100,
-      });
+      days.push({ day: format(d, 'dd/MM'), balance: running });
     }
     return days;
   }, [transactions, accounts]);
 
-  // Upcoming (next 7 days, from recurring)
+  // ==========================================================
+  // Upcoming — next 7 days recurring
+  // ==========================================================
   const upcoming = useMemo(() => {
-    const out: { tx: Transaction; nextDate: Date }[] = [];
-    const horizon = addDays(today, 7);
-    for (const r of transactions.filter(t => t.recurrence !== 'none')) {
-      let occ = nextOccurrence(r, addDays(today, 0));
-      let guard = 0;
-      while (occ && occ <= horizon && guard < 30) {
-        out.push({ tx: r, nextDate: occ });
-        if (r.recurrence === 'daily') occ = addDays(occ, 1);
-        else if (r.recurrence === 'weekly') occ = addWeeks(occ, 1);
-        else if (r.recurrence === 'monthly') occ = addMonths(occ, 1);
-        else break;
-        guard++;
+    const items: { date: Date; tx: any }[] = [];
+    const recurring = transactions.filter(
+      (tx) =>
+        tx.recurrence !== 'none' &&
+        !tx.tags?.includes('__split_parent') &&
+        tx.type !== 'transfer',
+    );
+    for (let i = 1; i <= 7; i++) {
+      const d = addDays(now, i);
+      for (const rec of recurring) {
+        const last = new Date(rec.date);
+        let match = false;
+        if (rec.recurrence === 'daily') match = true;
+        else if (rec.recurrence === 'weekly') match = d.getDay() === last.getDay();
+        else if (rec.recurrence === 'monthly') match = d.getDate() === last.getDate();
+        if (match) items.push({ date: d, tx: rec });
       }
     }
-    out.sort((a, b) => a.nextDate.getTime() - b.nextDate.getTime());
-    return out;
+    return items;
   }, [transactions]);
 
-  const accMap = useMemo(
-    () => Object.fromEntries(accounts.map(a => [a.id, a.name])),
-    [accounts]
-  );
+  const finalProjected = projection[projection.length - 1]?.balance ?? 0;
 
   return (
-    <div>
-      <PageHeader
-        title="Cash Flow"
-        description="Visualize how money flows through your accounts and what's coming next."
-      />
-
-      {/* Top summary */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <Card glow="pos">
-          <div className="flex justify-between items-start">
-            <div className="text-xs font-medium text-muted uppercase tracking-wide">
-              Total Inflows
-            </div>
-            <ArrowUpRight size={16} className="text-pos" />
-          </div>
-          <Money
-            value={waterfall.totalInc}
-            className="text-2xl font-semibold mt-2 block"
-          />
-          <div className="text-xs text-muted mt-1">This month</div>
-        </Card>
-        <Card glow="neg">
-          <div className="flex justify-between items-start">
-            <div className="text-xs font-medium text-muted uppercase tracking-wide">
-              Total Outflows
-            </div>
-            <ArrowDownRight size={16} className="text-neg" />
-          </div>
-          <Money
-            value={-waterfall.totalExp}
-            className="text-2xl font-semibold mt-2 block"
-          />
-          <div className="text-xs text-muted mt-1">This month</div>
-        </Card>
-        <Card glow={waterfall.net >= 0 ? 'pos' : 'neg'}>
-          <div className="flex justify-between items-start">
-            <div className="text-xs font-medium text-muted uppercase tracking-wide">
-              Net Flow
-            </div>
-          </div>
-          <Money
-            value={waterfall.net}
-            forceSign
-            className="text-2xl font-semibold mt-2 block"
-          />
-          <div className="text-xs text-muted mt-1">
-            {waterfall.totalInc > 0
-              ? `${Math.round((waterfall.net / waterfall.totalInc) * 100)}% savings rate`
-              : '—'}
-          </div>
-        </Card>
-      </div>
+    <div className="animate-fade-in">
+      <header className="mb-6">
+        <h1 className="text-2xl font-bold">{t('cashflow.title')}</h1>
+        <p className="text-sm text-muted">{format(now, 'MMMM yyyy')}</p>
+      </header>
 
       {/* Waterfall */}
-      <Card className="mb-6">
-        <div className="mb-4">
-          <h2 className="text-base font-semibold">Money Flow Waterfall</h2>
-          <p className="text-xs text-muted mt-0.5">
-            Income sources build up, expenses break down, final net balance
-          </p>
+      <div className="card p-5 mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-sm font-semibold flex items-center gap-2">
+            <ArrowRightLeft size={16} className="text-pos" />
+            {t('cashflow.waterfall')}
+          </h3>
+          <div className="flex items-center gap-4 text-xs">
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 bg-pos rounded-full" />
+              {t('cashflow.inflows')}
+            </span>
+            <span className="flex items-center gap-1">
+              <span className="w-2 h-2 bg-neg rounded-full" />
+              {t('cashflow.outflows')}
+            </span>
+          </div>
         </div>
-        <ResponsiveContainer width="100%" height={320}>
-          <BarChart
-            data={waterfall.bars}
-            margin={{ top: 10, right: 10, left: 0, bottom: 40 }}
-          >
-            <XAxis
-              dataKey="name"
-              stroke="#64748b"
-              fontSize={10}
-              tickLine={false}
-              axisLine={false}
-              angle={-30}
-              textAnchor="end"
-              height={50}
-            />
-            <YAxis
-              stroke="#64748b"
-              fontSize={11}
-              tickLine={false}
-              axisLine={false}
-              width={80}
-              tickFormatter={(v: number) => formatShortCurrency(v, currency)}
-            />
-            <Tooltip
-              cursor={{ fill: 'rgba(255,255,255,0.03)' }}
-              content={({ active, payload }) => {
-                if (!active || !payload || payload.length === 0) return null;
-                const p = payload[0].payload;
-                return (
-                  <div className="bg-surface border border-border rounded-lg p-2.5 text-xs">
-                    <div className="font-medium">{p.name}</div>
-                    <div
-                      className={
-                        p.type === 'inflow'
-                          ? 'text-pos'
-                          : p.type === 'outflow'
-                          ? 'text-neg'
-                          : p.value >= 0
-                          ? 'text-pos'
-                          : 'text-neg'
-                      }
-                    >
-                      {formatShortCurrency(p.value, currency)}
-                    </div>
-                  </div>
-                );
-              }}
-            />
-            <ReferenceLine y={0} stroke="#2a2a3a" />
-            <Bar
-              dataKey={(d: { start: number; end: number }) => [d.start, d.end]}
-              radius={[4, 4, 4, 4]}
-            >
-              {waterfall.bars.map((b, i) => (
-                <Cell key={i} fill={b.color} />
-              ))}
-            </Bar>
-          </BarChart>
-        </ResponsiveContainer>
-      </Card>
-
-      {/* Projection + Upcoming */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-        <Card className="lg:col-span-2">
-          <div className="mb-4">
-            <h2 className="text-base font-semibold">30-Day Balance Projection</h2>
-            <p className="text-xs text-muted mt-0.5">
-              Forecast based on recurring transactions
-            </p>
-          </div>
-          <ResponsiveContainer width="100%" height={280}>
-            <AreaChart
-              data={projection}
-              margin={{ top: 5, right: 10, left: 0, bottom: 0 }}
-            >
-              <defs>
-                <linearGradient id="projGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.35} />
-                  <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
-                </linearGradient>
-              </defs>
+        <div className="h-80">
+          <ResponsiveContainer>
+            <BarChart data={waterfall.data} margin={{ top: 20, right: 10, left: 0, bottom: 40 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
               <XAxis
-                dataKey="label"
-                stroke="#64748b"
-                fontSize={10}
-                tickLine={false}
-                axisLine={false}
-                interval={3}
-              />
-              <YAxis
-                stroke="#64748b"
+                dataKey="name"
+                stroke="var(--text-muted)"
+                angle={-25}
+                textAnchor="end"
+                height={60}
+                interval={0}
                 fontSize={11}
-                tickLine={false}
-                axisLine={false}
-                width={70}
-                tickFormatter={(v: number) => formatShortCurrency(v, currency)}
               />
+              <YAxis stroke="var(--text-muted)" tickFormatter={(v) => formatCompact(v, lang)} />
               <Tooltip
-                formatter={(v: number) => formatShortCurrency(v, currency)}
+                formatter={(v: number, n: string) => [money(v), n === 'positive' ? t('cashflow.inflows') : t('cashflow.outflows')]}
+                contentStyle={{
+                  backgroundColor: 'var(--bg-surface)',
+                  border: '1px solid var(--border-strong)',
+                  borderRadius: 8,
+                }}
               />
-              <Area
-                type="monotone"
-                dataKey="balance"
-                stroke="#3b82f6"
-                strokeWidth={2}
-                fill="url(#projGrad)"
-              />
-            </AreaChart>
+              <Bar dataKey="positive" stackId="wf" radius={[4, 4, 0, 0]}>
+                {waterfall.data.map((d) => (
+                  <Cell key={d.key + '_p'} fill={d.color} />
+                ))}
+              </Bar>
+              <Bar dataKey="negative" stackId="wf" radius={[4, 4, 0, 0]}>
+                {waterfall.data.map((d) => (
+                  <Cell key={d.key + '_n'} fill={d.color} />
+                ))}
+              </Bar>
+            </BarChart>
           </ResponsiveContainer>
-        </Card>
+        </div>
+      </div>
 
-        <Card>
-          <div className="mb-4 flex items-center justify-between">
-            <div>
-              <h2 className="text-base font-semibold">Upcoming</h2>
-              <p className="text-xs text-muted mt-0.5">Next 7 days</p>
-            </div>
-            <Clock size={18} className="text-muted" />
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+        {/* Projected balance */}
+        <div className="card p-5 lg:col-span-2">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-sm font-semibold flex items-center gap-2">
+              <TrendingUp size={16} className="text-pos" />
+              {t('cashflow.projected')}
+            </h3>
+            <MoneyText value={finalProjected} size="lg" className="font-bold" />
           </div>
+          <div className="h-56">
+            <ResponsiveContainer>
+              <LineChart data={projection}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+                <XAxis dataKey="day" stroke="var(--text-muted)" />
+                <YAxis stroke="var(--text-muted)" tickFormatter={(v) => formatCompact(v, lang)} />
+                <Tooltip
+                  formatter={(v: number) => money(v)}
+                  contentStyle={{
+                    backgroundColor: 'var(--bg-surface)',
+                    border: '1px solid var(--border-strong)',
+                    borderRadius: 8,
+                  }}
+                />
+                <ReferenceLine y={0} stroke="#64748b" strokeDasharray="3 3" />
+                <Line
+                  type="monotone"
+                  dataKey="balance"
+                  stroke="#3b82f6"
+                  strokeWidth={2.5}
+                  dot={false}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Upcoming */}
+        <div className="card p-5">
+          <h3 className="text-sm font-semibold mb-4 flex items-center gap-2">
+            <Calendar size={16} className="text-warn" />
+            {t('cashflow.upcoming')}
+          </h3>
           {upcoming.length === 0 ? (
-            <div className="text-sm text-muted text-center py-6">
-              No recurring transactions in the next 7 days.
+            <div className="text-sm text-muted py-6 text-center">
+              {t('cashflow.noUpcoming')}
             </div>
           ) : (
-            <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+            <div className="space-y-2 max-h-80 overflow-y-auto">
               {upcoming.map((u, i) => {
-                const sign = signedAmount(u.tx);
+                const sign = u.tx.type === 'income' ? 1 : -1;
                 return (
                   <div
                     key={i}
-                    className="flex items-center gap-2.5 p-2 rounded-lg bg-surface-hover/50 border border-border"
+                    className="flex items-center justify-between p-2 rounded-lg hover:bg-surface-hover transition-colors"
                   >
-                    <div className="w-8 h-8 rounded-lg bg-surface flex items-center justify-center text-sm flex-shrink-0">
-                      {CATEGORY_EMOJIS[u.tx.category] || '🔁'}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm truncate">{u.tx.description}</div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{u.tx.description}</div>
                       <div className="text-[11px] text-muted">
-                        {format(u.nextDate, 'EEE, MMM d')} ·{' '}
-                        {accMap[u.tx.accountId]}
+                        {format(u.date, 'dd MMM')} · {tc(u.tx.category)}
                       </div>
                     </div>
-                    <Money
-                      value={sign}
-                      className="text-sm font-medium"
-                      forceSign
-                    />
+                    <MoneyText value={sign * u.tx.amount} size="sm" />
                   </div>
                 );
               })}
             </div>
           )}
-        </Card>
+        </div>
       </div>
 
-      {/* Flow legend */}
-      <Card>
-        <div className="mb-4">
-          <h2 className="text-base font-semibold">Flow Lines</h2>
-          <p className="text-xs text-muted mt-0.5">
-            Breakdown of how each category contributes to your net balance
-          </p>
+      {/* Summary cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="card card-pos p-4">
+          <div className="text-[11px] uppercase tracking-wider text-muted mb-2">
+            {t('cashflow.inflows')}
+          </div>
+          <MoneyText value={waterfall.income} forceColor="pos" size="xl" />
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {waterfall.bars
-            .filter(b => b.type !== 'net')
-            .map((b, i) => {
-              const pct =
-                b.type === 'inflow'
-                  ? (b.value / (waterfall.totalInc || 1)) * 100
-                  : (Math.abs(b.value) / (waterfall.totalExp || 1)) * 100;
-              return (
-                <div
-                  key={i}
-                  className="flex items-center gap-3 p-2.5 rounded-lg bg-surface-hover/50 border border-border"
-                >
-                  <Badge
-                    variant={b.type === 'inflow' ? 'pos' : 'neg'}
-                    className="!text-[10px]"
-                  >
-                    {b.type === 'inflow' ? 'IN' : 'OUT'}
-                  </Badge>
-                  <span
-                    className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                    style={{ background: b.color }}
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between">
-                      <span className="text-sm truncate">{b.name}</span>
-                      <Money
-                        value={b.value}
-                        forceSign
-                        className="text-sm font-medium"
-                      />
-                    </div>
-                    <div className="h-1 rounded-full bg-surface mt-1 overflow-hidden">
-                      <div
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${pct}%`,
-                          background: b.color,
-                        }}
-                      />
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+        <div className="card card-neg p-4">
+          <div className="text-[11px] uppercase tracking-wider text-muted mb-2">
+            {t('cashflow.outflows')}
+          </div>
+          <MoneyText
+            value={-waterfall.expenses.reduce((a, b) => a + b.value, 0)}
+            forceColor="neg"
+            size="xl"
+          />
         </div>
-      </Card>
+        <div className="card p-4">
+          <div className="text-[11px] uppercase tracking-wider text-muted mb-2">
+            {t('common.net')}
+          </div>
+          <MoneyText value={waterfall.net} size="xl" />
+        </div>
+      </div>
     </div>
   );
 }

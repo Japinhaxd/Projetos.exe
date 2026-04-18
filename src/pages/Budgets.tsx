@@ -1,409 +1,320 @@
 import { useMemo, useState } from 'react';
-import { format } from 'date-fns';
-import {
-  AlertTriangle,
-  CheckCircle2,
-  GripVertical,
-  Plus,
-  Target,
-  Trash2,
-  Edit3,
-} from 'lucide-react';
-import { Card } from '../components/ui/Card';
-import { Button } from '../components/ui/Button';
-import { Money } from '../components/ui/Money';
-import { Badge } from '../components/ui/Badge';
-import { Confirm, Modal } from '../components/ui/Modal';
-import { Field, Input, Select } from '../components/ui/Input';
-import { PageHeader } from '../components/layout/PageHeader';
-import { EmptyState } from '../components/layout/EmptyState';
-import { CATEGORIES, CATEGORY_EMOJIS, Budget } from '../types';
-import { useStore } from '../store/useStore';
-import { budgetBarColor, isSameMonth, monthKey } from '../lib/utils';
+import { Plus, AlertTriangle, Target, Trash2, GripVertical, Pencil } from 'lucide-react';
+import { startOfMonth, endOfMonth, format, isWithinInterval } from 'date-fns';
+import { useStore, getCurrentMonth } from '../store/useStore';
+import { useI18n } from '../i18n/useI18n';
+import { MoneyText } from '../components/ui/MoneyText';
+import { CATEGORIES, CATEGORY_COLORS } from '../types';
+import { round2, parseAmount } from '../lib/money';
+import { EmptyState } from '../components/ui/EmptyState';
+import { Modal } from '../components/ui/Modal';
 
 export function Budgets() {
-  const budgets = useStore(s => s.budgets);
-  const transactions = useStore(s => s.transactions);
-  const addBudget = useStore(s => s.addBudget);
-  const updateBudget = useStore(s => s.updateBudget);
-  const removeBudget = useStore(s => s.removeBudget);
-  const reorderBudgets = useStore(s => s.reorderBudgets);
+  const { t, tc, money } = useI18n();
+  const transactions = useStore((s) => s.transactions);
+  const budgets = useStore((s) => s.budgets);
+  const addBudget = useStore((s) => s.addBudget);
+  const updateBudget = useStore((s) => s.updateBudget);
+  const deleteBudget = useStore((s) => s.deleteBudget);
+  const reorderBudgets = useStore((s) => s.reorderBudgets);
+  const pushToast = useStore((s) => s.pushToast);
 
-  const today = new Date();
-  const curMonth = monthKey(today);
-
-  // Show only budgets for the current month
-  const monthBudgets = useMemo(
-    () => budgets.filter(b => b.month === curMonth),
-    [budgets, curMonth]
-  );
-
-  // Compute spent per category for current month
-  const spentByCategory = useMemo(() => {
-    const map: Record<string, number> = {};
-    for (const t of transactions) {
-      if (t.type !== 'expense') continue;
-      if (!isSameMonth(t.date, today)) continue;
-      map[t.category] = (map[t.category] || 0) + t.amount;
-    }
-    return map;
-  }, [transactions]);
-
-  // Health score
-  const healthScore = useMemo(() => {
-    if (monthBudgets.length === 0) return 0;
-    let healthy = 0;
-    for (const b of monthBudgets) {
-      const spent = spentByCategory[b.category] || 0;
-      if (spent <= b.monthlyLimit) healthy++;
-    }
-    return Math.round((healthy / monthBudgets.length) * 100);
-  }, [monthBudgets, spentByCategory]);
-
-  const totalLimit = monthBudgets.reduce((s, b) => s + b.monthlyLimit, 0);
-  const totalSpent = monthBudgets.reduce(
-    (s, b) => s + (spentByCategory[b.category] || 0),
-    0
-  );
-  const overCount = monthBudgets.filter(
-    b => (spentByCategory[b.category] || 0) > b.monthlyLimit
-  ).length;
-
-  // Modal state
   const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Budget | null>(null);
-  const [category, setCategory] = useState<string>('Food');
-  const [limit, setLimit] = useState<string>('');
-  const [confirmDelete, setConfirmDelete] = useState<Budget | null>(null);
-
-  // Drag & drop
+  const [editId, setEditId] = useState<string | null>(null);
+  const [formCategory, setFormCategory] = useState<string>('Food');
+  const [formLimit, setFormLimit] = useState('');
   const [dragId, setDragId] = useState<string | null>(null);
 
-  function openNew() {
-    setEditing(null);
-    setCategory(
-      CATEGORIES.find(c => !monthBudgets.some(b => b.category === c)) || 'Food'
-    );
-    setLimit('');
-    setModalOpen(true);
-  }
-  function openEdit(b: Budget) {
-    setEditing(b);
-    setCategory(b.category);
-    setLimit(String(b.monthlyLimit));
-    setModalOpen(true);
-  }
-  function save() {
-    const amt = parseFloat(limit);
-    if (!amt || amt <= 0) return;
-    if (editing) {
-      updateBudget(editing.id, { category, monthlyLimit: amt });
-    } else {
-      addBudget({ category, monthlyLimit: amt, month: curMonth });
+  const now = new Date();
+  const currentMonth = getCurrentMonth();
+  const monthStart = startOfMonth(now);
+  const monthEnd = endOfMonth(now);
+
+  const budgetRows = useMemo(() => {
+    const currentBudgets = budgets
+      .filter((b) => b.month === currentMonth)
+      .sort((a, b) => a.order - b.order);
+    // Spent per category this month
+    const spentMap: Record<string, number> = {};
+    for (const tx of transactions) {
+      if (tx.tags?.includes('__split_parent')) continue;
+      if (tx.type !== 'expense') continue;
+      const d = new Date(tx.date);
+      if (!isWithinInterval(d, { start: monthStart, end: monthEnd })) continue;
+      spentMap[tx.category] = round2((spentMap[tx.category] || 0) + tx.amount);
     }
-    setModalOpen(false);
+    return currentBudgets.map((b) => {
+      const spent = round2(spentMap[b.category] || 0);
+      const pct = b.monthlyLimit > 0 ? (spent / b.monthlyLimit) * 100 : 0;
+      return {
+        ...b,
+        spent,
+        pct,
+        remaining: round2(b.monthlyLimit - spent),
+      };
+    });
+  }, [budgets, transactions, currentMonth, monthStart, monthEnd]);
+
+  const health = useMemo(() => {
+    if (budgetRows.length === 0) return { score: 100, onTrack: 0, atRisk: 0, exceeded: 0 };
+    let onTrack = 0,
+      atRisk = 0,
+      exceeded = 0;
+    for (const r of budgetRows) {
+      if (r.pct >= 100) exceeded++;
+      else if (r.pct >= 85) atRisk++;
+      else onTrack++;
+    }
+    const score = Math.round((onTrack / budgetRows.length) * 100);
+    return { score, onTrack, atRisk, exceeded };
+  }, [budgetRows]);
+
+  function openForm(id?: string) {
+    if (id) {
+      const b = budgets.find((x) => x.id === id);
+      if (!b) return;
+      setEditId(id);
+      setFormCategory(b.category);
+      setFormLimit(String(b.monthlyLimit));
+    } else {
+      setEditId(null);
+      setFormCategory('Food');
+      setFormLimit('');
+    }
+    setModalOpen(true);
   }
 
-  function handleDragStart(id: string) {
+  function handleSave() {
+    const limit = parseAmount(formLimit);
+    if (limit <= 0) {
+      pushToast({ type: 'error', message: t('budgets.limitAmount') });
+      return;
+    }
+    if (editId) {
+      updateBudget(editId, { category: formCategory, monthlyLimit: limit });
+    } else {
+      // Prevent duplicates for the same category+month
+      const exists = budgets.find(
+        (b) => b.month === currentMonth && b.category === formCategory,
+      );
+      if (exists) {
+        updateBudget(exists.id, { monthlyLimit: limit });
+      } else {
+        addBudget({ category: formCategory, monthlyLimit: limit, month: currentMonth });
+      }
+    }
+    setModalOpen(false);
+    pushToast({ type: 'success', message: t('toast.saved') });
+  }
+
+  function onDragStart(id: string) {
     setDragId(id);
   }
-  function handleDragOver(e: React.DragEvent, overId: string) {
+
+  function onDragOver(e: React.DragEvent) {
     e.preventDefault();
-    if (!dragId || dragId === overId) return;
   }
-  function handleDrop(e: React.DragEvent, overId: string) {
-    e.preventDefault();
-    if (!dragId || dragId === overId) return;
-    const ids = monthBudgets.map(b => b.id);
-    const fromIdx = ids.indexOf(dragId);
-    const toIdx = ids.indexOf(overId);
-    if (fromIdx === -1 || toIdx === -1) return;
+
+  function onDrop(targetId: string) {
+    if (!dragId || dragId === targetId) {
+      setDragId(null);
+      return;
+    }
+    const ids = budgetRows.map((r) => r.id);
+    const srcIdx = ids.indexOf(dragId);
+    const tgtIdx = ids.indexOf(targetId);
+    if (srcIdx < 0 || tgtIdx < 0) return;
     const next = [...ids];
-    next.splice(fromIdx, 1);
-    next.splice(toIdx, 0, dragId);
+    next.splice(srcIdx, 1);
+    next.splice(tgtIdx, 0, dragId);
     reorderBudgets(next);
     setDragId(null);
   }
 
+  function barColor(pct: number): string {
+    if (pct > 100) return '#ef4444';
+    if (pct >= 85) return '#fb923c';
+    if (pct >= 60) return '#f59e0b';
+    return '#3b82f6';
+  }
+
   return (
-    <div>
-      <PageHeader
-        title="Budgets"
-        description={`Your monthly limits for ${format(today, 'MMMM yyyy')}. Drag to reorder.`}
-        actions={
-          <Button icon={<Plus size={16} />} onClick={openNew}>
-            New Budget
-          </Button>
-        }
-      />
+    <div className="animate-fade-in">
+      <header className="mb-6 flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold">{t('budgets.title')}</h1>
+          <p className="text-sm text-muted">{format(now, 'MMMM yyyy')}</p>
+        </div>
+        <button className="btn btn-primary" onClick={() => openForm()}>
+          <Plus size={14} />
+          {t('budgets.new')}
+        </button>
+      </header>
 
-      {/* Summary */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-        <Card
-          glow={healthScore >= 80 ? 'pos' : healthScore < 50 ? 'neg' : 'none'}
-        >
-          <div className="flex justify-between items-start">
-            <div className="text-xs font-medium text-muted uppercase tracking-wide">
-              Health Score
-            </div>
-            {healthScore >= 80 ? (
-              <CheckCircle2 size={15} className="text-pos" />
-            ) : (
-              <AlertTriangle size={15} className="text-warn" />
-            )}
+      {/* Health score */}
+      <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-6">
+        <div className="card p-4">
+          <div className="text-[11px] uppercase tracking-wider text-muted mb-2">
+            {t('budgets.healthScore')}
           </div>
-          <div
-            className={`text-2xl font-semibold mt-2 ${
-              healthScore >= 80
-                ? 'text-pos'
-                : healthScore >= 50
-                ? 'text-warn'
-                : 'text-neg'
-            }`}
-          >
-            {healthScore}%
+          <div className="text-3xl font-bold tabular-nums text-pos">
+            {health.score}%
           </div>
-          <div className="text-xs text-muted mt-1">
-            {monthBudgets.length - overCount} / {monthBudgets.length} on track
+        </div>
+        <div className="card card-pos p-4">
+          <div className="text-[11px] uppercase tracking-wider text-muted mb-2">
+            {t('budgets.onTrack')}
           </div>
-        </Card>
-
-        <Card>
-          <div className="text-xs font-medium text-muted uppercase tracking-wide">
-            Total Budget
+          <div className="text-3xl font-bold tabular-nums text-pos">{health.onTrack}</div>
+        </div>
+        <div className="card p-4">
+          <div className="text-[11px] uppercase tracking-wider text-muted mb-2">
+            {t('budgets.atRisk')}
           </div>
-          <Money
-            value={totalLimit}
-            neutralZero={false}
-            className="text-2xl font-semibold mt-2 block !text-text"
-          />
-          <div className="text-xs text-muted mt-1">
-            across {monthBudgets.length} categories
+          <div className="text-3xl font-bold tabular-nums text-warn">{health.atRisk}</div>
+        </div>
+        <div className="card card-neg p-4">
+          <div className="text-[11px] uppercase tracking-wider text-muted mb-2">
+            {t('budgets.exceeded')}
           </div>
-        </Card>
-
-        <Card>
-          <div className="text-xs font-medium text-muted uppercase tracking-wide">
-            Spent
-          </div>
-          <Money
-            value={-totalSpent}
-            className="text-2xl font-semibold mt-2 block"
-          />
-          <div className="text-xs text-muted mt-1">
-            {totalLimit > 0
-              ? `${Math.round((totalSpent / totalLimit) * 100)}% of budget`
-              : 'no budget set'}
-          </div>
-        </Card>
-
-        <Card>
-          <div className="text-xs font-medium text-muted uppercase tracking-wide">
-            Remaining
-          </div>
-          <Money
-            value={totalLimit - totalSpent}
-            forceSign
-            className="text-2xl font-semibold mt-2 block"
-          />
-          <div className="text-xs text-muted mt-1">
-            {overCount > 0 ? `${overCount} over budget` : 'all within limits'}
-          </div>
-        </Card>
+          <div className="text-3xl font-bold tabular-nums text-neg">{health.exceeded}</div>
+        </div>
       </div>
 
-      {/* Budgets list */}
-      {monthBudgets.length === 0 ? (
-        <Card>
+      {/* Budget rows */}
+      {budgetRows.length === 0 ? (
+        <div className="card p-6">
           <EmptyState
-            icon={<Target size={22} />}
-            title="No budgets for this month"
-            description="Set spending limits per category and keep your finances on track."
+            icon={Target}
+            title={t('budgets.empty')}
             action={
-              <Button icon={<Plus size={16} />} onClick={openNew}>
-                Create first budget
-              </Button>
+              <button className="btn btn-primary" onClick={() => openForm()}>
+                <Plus size={14} />
+                {t('budgets.new')}
+              </button>
             }
           />
-        </Card>
+        </div>
       ) : (
         <div className="space-y-3">
-          {monthBudgets.map(b => {
-            const spent = spentByCategory[b.category] || 0;
-            const pct = b.monthlyLimit > 0 ? (spent / b.monthlyLimit) * 100 : 0;
-            const barColor = budgetBarColor(pct);
-            const remaining = b.monthlyLimit - spent;
-            const over = pct > 100;
-            return (
-              <Card
-                key={b.id}
-                className={`transition-all ${
-                  dragId === b.id ? 'opacity-50' : ''
-                }`}
-                glow={over ? 'neg' : 'none'}
-              >
-                <div
-                  draggable
-                  onDragStart={() => handleDragStart(b.id)}
-                  onDragOver={e => handleDragOver(e, b.id)}
-                  onDrop={e => handleDrop(e, b.id)}
-                  onDragEnd={() => setDragId(null)}
-                  className="flex items-center gap-3 cursor-grab active:cursor-grabbing"
-                >
-                  <GripVertical size={16} className="text-muted flex-shrink-0" />
-                  <div className="w-10 h-10 rounded-lg bg-surface-hover flex items-center justify-center text-lg flex-shrink-0">
-                    {CATEGORY_EMOJIS[b.category] || '📦'}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-4 mb-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="font-medium">{b.category}</span>
-                        {over && (
-                          <Badge variant="neg" className="!text-[10px]">
-                            <AlertTriangle size={10} /> Over budget
-                          </Badge>
-                        )}
-                        {pct > 85 && pct <= 100 && (
-                          <Badge variant="warn" className="!text-[10px]">
-                            Near limit
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-4 text-sm tabular-nums">
-                        <span className="text-muted hidden sm:inline">
-                          {Math.round(pct)}%
+          {budgetRows.map((b) => (
+            <div
+              key={b.id}
+              className="card p-4 group transition-all"
+              draggable
+              onDragStart={() => onDragStart(b.id)}
+              onDragOver={onDragOver}
+              onDrop={() => onDrop(b.id)}
+              style={{ opacity: dragId === b.id ? 0.5 : 1 }}
+            >
+              <div className="flex items-center gap-3">
+                <GripVertical
+                  size={14}
+                  className="text-muted opacity-0 group-hover:opacity-100 transition-opacity cursor-grab"
+                />
+                <span
+                  className="w-3 h-3 rounded-full flex-shrink-0"
+                  style={{ background: CATEGORY_COLORS[b.category] || '#64748b' }}
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium">{tc(b.category)}</span>
+                      {b.pct >= 100 && (
+                        <span className="badge badge-neg">
+                          <AlertTriangle size={10} /> {t('common.over')}
                         </span>
-                        <div className="whitespace-nowrap">
-                          <Money value={-spent} signInvert className="font-medium" />
-                          <span className="text-muted mx-1">/</span>
-                          <Money
-                            value={b.monthlyLimit}
-                            neutralZero={false}
-                            className="!text-text"
-                          />
-                        </div>
-                      </div>
+                      )}
+                      {b.pct >= 85 && b.pct < 100 && (
+                        <span className="badge badge-warn">
+                          <AlertTriangle size={10} /> {t('budgets.atRisk')}
+                        </span>
+                      )}
                     </div>
-                    <div className="h-2 rounded-full bg-surface-hover overflow-hidden">
-                      <div
-                        className="h-full rounded-full transition-all"
-                        style={{
-                          width: `${Math.min(100, pct)}%`,
-                          background: barColor,
-                          boxShadow: over ? '0 0 8px rgba(239,68,68,0.5)' : undefined,
+                    <div className="flex items-center gap-1">
+                      <button className="btn-icon" onClick={() => openForm(b.id)}>
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        className="btn-icon hover:text-neg"
+                        onClick={() => {
+                          deleteBudget(b.id);
+                          pushToast({ type: 'success', message: t('toast.deleted') });
                         }}
-                      />
-                    </div>
-                    <div className="flex justify-between mt-1.5 text-xs text-muted">
-                      <span>
-                        {over
-                          ? 'Exceeded by '
-                          : remaining > 0
-                          ? 'Remaining '
-                          : 'Limit reached '}
-                        <Money
-                          value={Math.abs(remaining)}
-                          neutralZero
-                          className={
-                            over
-                              ? '!text-neg'
-                              : remaining >= 0
-                              ? '!text-pos'
-                              : '!text-neg'
-                          }
-                        />
-                      </span>
-                      <span>Resets {format(new Date(today.getFullYear(), today.getMonth() + 1, 1), 'MMM d')}</span>
+                      >
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button
-                      onClick={() => openEdit(b)}
-                      className="p-2 text-muted hover:text-text hover:bg-surface-hover rounded"
-                    >
-                      <Edit3 size={14} />
-                    </button>
-                    <button
-                      onClick={() => setConfirmDelete(b)}
-                      className="p-2 text-muted hover:text-neg hover:bg-surface-hover rounded"
-                    >
-                      <Trash2 size={14} />
-                    </button>
+                  <div className="h-2.5 bg-surface-hover rounded-full overflow-hidden mb-1.5">
+                    <div
+                      className="h-full rounded-full transition-all"
+                      style={{
+                        width: `${Math.min(100, b.pct)}%`,
+                        background: barColor(b.pct),
+                      }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-muted">
+                      {t('common.spent')} <MoneyText value={b.spent} size="sm" colored={false} />{' '}
+                      / {money(b.monthlyLimit)}
+                    </span>
+                    <span className="tabular-nums" style={{ color: barColor(b.pct) }}>
+                      {b.pct.toFixed(0)}%
+                    </span>
                   </div>
                 </div>
-              </Card>
-            );
-          })}
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
-      {/* New / Edit modal */}
       <Modal
         open={modalOpen}
         onClose={() => setModalOpen(false)}
-        title={editing ? 'Edit Budget' : 'New Budget'}
-        footer={
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={save}>{editing ? 'Save' : 'Create'}</Button>
-          </div>
-        }
+        title={editId ? t('common.edit') : t('budgets.new')}
       >
         <div className="space-y-4">
-          <Field label="Category">
-            <Select
-              value={category}
-              onChange={e => setCategory(e.target.value)}
-              disabled={!!editing}
+          <div>
+            <label className="block text-xs font-medium text-muted mb-1.5">
+              {t('common.category')}
+            </label>
+            <select
+              className="input"
+              value={formCategory}
+              onChange={(e) => setFormCategory(e.target.value)}
             >
-              {CATEGORIES.map(c => (
-                <option
-                  key={c}
-                  value={c}
-                  disabled={
-                    !editing && monthBudgets.some(b => b.category === c)
-                  }
-                >
-                  {c}
-                  {!editing && monthBudgets.some(b => b.category === c)
-                    ? ' (used)'
-                    : ''}
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {tc(c)}
                 </option>
               ))}
-            </Select>
-          </Field>
-          <Field label="Monthly Limit">
-            <Input
-              type="number"
-              step="0.01"
-              min="0"
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted mb-1.5">
+              {t('budgets.limitAmount')}
+            </label>
+            <input
+              className="input tabular-nums"
+              inputMode="decimal"
+              value={formLimit}
+              onChange={(e) => setFormLimit(e.target.value)}
               placeholder="0.00"
-              value={limit}
-              onChange={e => setLimit(e.target.value)}
-              autoFocus
             />
-          </Field>
-          <div className="text-xs text-muted">
-            This limit will apply for {format(today, 'MMMM yyyy')}. You can
-            adjust it anytime.
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <button className="btn btn-ghost" onClick={() => setModalOpen(false)}>
+              {t('common.cancel')}
+            </button>
+            <button className="btn btn-primary" onClick={handleSave}>
+              {t('common.save')}
+            </button>
           </div>
         </div>
       </Modal>
-
-      {/* Confirm delete */}
-      <Confirm
-        open={!!confirmDelete}
-        title="Delete budget"
-        message={`Remove budget for ${confirmDelete?.category}? This won't delete any transactions.`}
-        confirmText="Delete"
-        onCancel={() => setConfirmDelete(null)}
-        onConfirm={() => {
-          if (confirmDelete) removeBudget(confirmDelete.id);
-          setConfirmDelete(null);
-        }}
-      />
     </div>
   );
 }

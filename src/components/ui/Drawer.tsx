@@ -1,48 +1,43 @@
 import { X } from 'lucide-react';
-import { ReactNode, useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 
-interface DrawerProps {
+interface Props {
   open: boolean;
   onClose: () => void;
-  title: string;
+  title?: string;
   children: ReactNode;
-  footer?: ReactNode;
   width?: string;
 }
 
-export function Drawer({ open, onClose, title, children, footer, width = '480px' }: DrawerProps) {
+export function Drawer({ open, onClose, title, children, width = 'max-w-md' }: Props) {
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && open) onClose();
-    };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') onClose();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
   if (!open) return null;
 
   return (
-    <>
+    <div className="fixed inset-0 z-50 flex animate-fade-in">
       <div
+        className="flex-1 bg-black/60 backdrop-blur-sm"
         onClick={onClose}
-        className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 animate-fade-in"
       />
-      <div
-        className="fixed right-0 top-0 bottom-0 bg-surface border-l border-border z-50 flex flex-col animate-slide-in"
-        style={{ width }}
+      <aside
+        className={`w-full ${width} bg-surface border-l border-border shadow-2xl animate-slide-in flex flex-col`}
       >
-        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+        <div className="flex items-center justify-between p-4 border-b border-border">
           <h2 className="text-lg font-semibold">{title}</h2>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-muted hover:text-text hover:bg-surface-hover"
-          >
+          <button onClick={onClose} className="btn-icon" aria-label="Close">
             <X size={18} />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-6 py-5">{children}</div>
-        {footer && <div className="border-t border-border px-6 py-4">{footer}</div>}
-      </div>
-    </>
+        <div className="flex-1 overflow-y-auto p-5">{children}</div>
+      </aside>
+    </div>
   );
 }
