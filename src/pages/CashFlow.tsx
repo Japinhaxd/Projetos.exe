@@ -17,7 +17,6 @@ import { ArrowRightLeft, Calendar, TrendingUp } from 'lucide-react';
 import { useStore, getTotalBalance } from '../store/useStore';
 import { useI18n } from '../i18n/useI18n';
 import { MoneyText } from '../components/ui/MoneyText';
-import { CATEGORY_COLORS } from '../types';
 import { round2, formatCompact } from '../lib/money';
 
 export function CashFlow() {
@@ -31,6 +30,10 @@ export function CashFlow() {
 
   // ==========================================================
   // Waterfall data — current month
+  // Shape:
+  //   { name, value, type: 'income' | 'expense' | 'net' }
+  // Colors are applied ONLY via <Cell> using the strict rule:
+  //   income → blue, expense → red, net → blue if ≥ 0 else red.
   // ==========================================================
   const waterfall = useMemo(() => {
     let income = 0;
@@ -50,30 +53,28 @@ export function CashFlow() {
 
     const data: {
       name: string;
-      positive?: number;
-      negative?: number;
-      color: string;
+      value: number;
+      type: 'income' | 'expense' | 'net';
       key: string;
     }[] = [];
     data.push({
       name: t('common.income'),
-      positive: income,
-      color: '#3b82f6',
+      value: income,
+      type: 'income',
       key: 'income',
     });
     for (const e of expenses) {
       data.push({
         name: tc(e.name),
-        negative: e.value,
-        color: CATEGORY_COLORS[e.name] || '#ef4444',
+        value: -e.value, // negative bar pointing down
+        type: 'expense',
         key: e.name,
       });
     }
     data.push({
       name: t('common.net'),
-      positive: net >= 0 ? net : undefined,
-      negative: net < 0 ? Math.abs(net) : undefined,
-      color: net >= 0 ? '#3b82f6' : '#ef4444',
+      value: net,
+      type: 'net',
       key: 'net',
     });
     return { data, income, net, expenses };
@@ -178,23 +179,32 @@ export function CashFlow() {
                 interval={0}
                 fontSize={11}
               />
-              <YAxis stroke="var(--text-muted)" tickFormatter={(v) => formatCompact(v, lang)} />
-              <Tooltip
-                formatter={(v: number, n: string) => [money(v), n === 'positive' ? t('cashflow.inflows') : t('cashflow.outflows')]}
-                contentStyle={{
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-strong)',
-                  borderRadius: 8,
-                }}
+              <YAxis
+                stroke="var(--text-muted)"
+                tickFormatter={(v) => formatCompact(v, lang)}
               />
-              <Bar dataKey="positive" stackId="wf" radius={[4, 4, 0, 0]}>
-                {waterfall.data.map((d) => (
-                  <Cell key={d.key + '_p'} fill={d.color} />
-                ))}
-              </Bar>
-              <Bar dataKey="negative" stackId="wf" radius={[4, 4, 0, 0]}>
-                {waterfall.data.map((d) => (
-                  <Cell key={d.key + '_n'} fill={d.color} />
+              <Tooltip
+                cursor={{ fill: 'rgba(255,255,255,0.04)' }}
+                content={<WaterfallTooltip money={money} t={t} />}
+              />
+              <Bar
+                dataKey="value"
+                radius={[4, 4, 4, 4]}
+                activeBar={{ stroke: 'rgba(255,255,255,0.15)', strokeWidth: 1 }}
+              >
+                {waterfall.data.map((entry, index) => (
+                  <Cell
+                    key={index}
+                    fill={
+                      entry.type === 'income'
+                        ? '#3b82f6'
+                        : entry.type === 'expense'
+                        ? '#ef4444'
+                        : entry.value >= 0
+                        ? '#3b82f6'
+                        : '#ef4444'
+                    }
+                  />
                 ))}
               </Bar>
             </BarChart>
@@ -298,6 +308,75 @@ export function CashFlow() {
           <MoneyText value={waterfall.net} size="xl" />
         </div>
       </div>
+    </div>
+  );
+}
+
+// ============================================================
+// Custom tooltip for the waterfall chart.
+// Fixed dark glassmorphism background — NEVER inherits bar color.
+// Text color is derived from entry.type so the line matches the rule:
+//   income  \u2192 blue (#3b82f6)
+//   expense \u2192 red  (#ef4444)
+//   net     \u2192 blue if value \u2265 0 else red
+// ============================================================
+interface WaterfallTooltipProps {
+  active?: boolean;
+  payload?: any[];
+  label?: string;
+  money: (v: number) => string;
+  t: (k: any) => string;
+}
+
+function WaterfallTooltip({ active, payload, label, money, t }: WaterfallTooltipProps) {
+  if (!active || !payload || payload.length === 0) return null;
+  const entry = payload[0].payload as {
+    name: string;
+    value: number;
+    type: 'income' | 'expense' | 'net';
+  };
+
+  // Color for the value line, matching the bar color rule exactly.
+  const valueColor =
+    entry.type === 'income'
+      ? '#3b82f6'
+      : entry.type === 'expense'
+      ? '#ef4444'
+      : entry.value >= 0
+      ? '#3b82f6'
+      : '#ef4444';
+
+  // Label: "Entrada" for income/net>=0, "Saída" for expense/net<0
+  const kindLabel =
+    entry.type === 'expense' || (entry.type === 'net' && entry.value < 0)
+      ? t('cashflow.outflows')
+      : t('cashflow.inflows');
+
+  return (
+    <div
+      style={{
+        background: '#111118',
+        border: '1px solid #1e1e2e',
+        borderRadius: '8px',
+        padding: '10px 14px',
+        color: '#e2e8f0',
+        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.35)',
+        backdropFilter: 'blur(6px)',
+      }}
+    >
+      <p style={{ fontWeight: 600, fontSize: 13, margin: 0, marginBottom: 4 }}>
+        {label}
+      </p>
+      <p
+        style={{
+          color: valueColor,
+          fontSize: 12,
+          margin: 0,
+          fontVariantNumeric: 'tabular-nums',
+        }}
+      >
+        {kindLabel}: {money(Math.abs(entry.value))}
+      </p>
     </div>
   );
 }
