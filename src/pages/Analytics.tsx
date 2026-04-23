@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import {
   BarChart,
   Bar,
+  Cell,
   ResponsiveContainer,
   XAxis,
   YAxis,
@@ -15,7 +16,8 @@ import { Flame, TrendingUp, Calendar, BarChart3, Target, Award, Repeat } from 'l
 import { useStore } from '../store/useStore';
 import { useI18n } from '../i18n/useI18n';
 import { MoneyText } from '../components/ui/MoneyText';
-import { CATEGORY_COLORS } from '../types';
+import { resolveCategoryColor } from '../types';
+import { ChartTooltip, CHART_CURSOR, CHART_ACTIVE_BAR } from '../components/ui/ChartTooltip';
 import { round2, formatCompact } from '../lib/money';
 
 export function Analytics() {
@@ -256,20 +258,51 @@ export function Analytics() {
           </h3>
           <div className="h-64">
             <ResponsiveContainer>
-              <BarChart data={breakdown.arr} layout="vertical" margin={{ left: 10, right: 20 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" horizontal={false} />
-                <XAxis type="number" stroke="var(--text-muted)" tickFormatter={(v) => formatCompact(v, lang)} />
+              <BarChart
+                data={breakdown.arr}
+                layout="vertical"
+                margin={{ left: 10, right: 20 }}
+                style={{ backgroundColor: 'transparent' }}
+              >
+                <CartesianGrid
+                  strokeDasharray="3 3"
+                  stroke="#1e1e2e"
+                  horizontal={false}
+                />
+                <XAxis
+                  type="number"
+                  stroke="#64748b"
+                  tick={{ fill: '#64748b' }}
+                  tickFormatter={(v) => formatCompact(v, lang)}
+                />
                 <YAxis
                   type="category"
                   dataKey="name"
-                  stroke="var(--text-muted)"
+                  stroke="#64748b"
+                  tick={{ fill: '#64748b' }}
                   width={80}
                   tickFormatter={(v) => tc(v)}
                 />
-                <Tooltip formatter={(v: number) => money(v)} />
-                <Bar dataKey="value" radius={[0, 4, 4, 0]}>
+                <Tooltip
+                  cursor={CHART_CURSOR}
+                  content={
+                    <ChartTooltip
+                      money={money}
+                      colorMode="category"
+                      labelFormatter={(l) =>
+                        `${t('common.category')}: ${tc(String(l ?? ''))}`
+                      }
+                      nameFormatter={() => t('common.amount')}
+                    />
+                  }
+                />
+                <Bar
+                  dataKey="value"
+                  radius={[0, 4, 4, 0]}
+                  activeBar={CHART_ACTIVE_BAR}
+                >
                   {breakdown.arr.map((d) => (
-                    <rect key={d.name} fill={CATEGORY_COLORS[d.name] || '#64748b'} />
+                    <Cell key={d.name} fill={resolveCategoryColor(d.name)} />
                   ))}
                 </Bar>
               </BarChart>
@@ -293,7 +326,7 @@ export function Analytics() {
                     <span className="flex items-center gap-2">
                       <span
                         className="w-2.5 h-2.5 rounded-full"
-                        style={{ background: CATEGORY_COLORS[c.name] || '#64748b' }}
+                        style={{ background: resolveCategoryColor(c.name) }}
                       />
                       <span>{tc(c.name)}</span>
                     </span>
@@ -306,11 +339,11 @@ export function Analytics() {
                       className="h-full rounded-full transition-all"
                       style={{
                         width: `${Math.min(100, c.pct)}%`,
-                        background: CATEGORY_COLORS[c.name] || '#64748b',
+                        background: resolveCategoryColor(c.name),
                       }}
                     />
                   </div>
-                  <div className="text-[11px] text-muted mt-1">
+                  <div className="text-[11px] mt-1">
                     <MoneyText value={-c.value} size="sm" forceColor="neg" />
                   </div>
                 </div>
@@ -329,10 +362,24 @@ export function Analytics() {
         <div className="h-52">
           <ResponsiveContainer>
             <LineChart data={rolling}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-              <XAxis dataKey="day" stroke="var(--text-muted)" />
-              <YAxis stroke="var(--text-muted)" tickFormatter={(v) => formatCompact(v, lang)} />
-              <Tooltip formatter={(v: number) => money(v)} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" />
+              <XAxis dataKey="day" stroke="#64748b" tick={{ fill: '#64748b' }} />
+              <YAxis
+                stroke="#64748b"
+                tick={{ fill: '#64748b' }}
+                tickFormatter={(v) => formatCompact(v, lang)}
+              />
+              <Tooltip
+                cursor={CHART_CURSOR}
+                content={
+                  <ChartTooltip
+                    money={money}
+                    colorMode="fixed"
+                    fixedColor="#3b82f6"
+                    nameFormatter={() => t('analytics.rollingAverage')}
+                  />
+                }
+              />
               <Line
                 type="monotone"
                 dataKey="avg"
@@ -375,7 +422,7 @@ export function Analytics() {
                       <span className="flex items-center gap-2">
                         <span
                           className="w-2 h-2 rounded-full"
-                          style={{ background: CATEGORY_COLORS[row.cat] || '#64748b' }}
+                          style={{ background: resolveCategoryColor(row.cat) }}
                         />
                         {tc(row.cat)}
                       </span>

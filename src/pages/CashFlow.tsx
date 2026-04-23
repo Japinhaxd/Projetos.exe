@@ -17,6 +17,7 @@ import { ArrowRightLeft, Calendar, TrendingUp } from 'lucide-react';
 import { useStore, getTotalBalance } from '../store/useStore';
 import { useI18n } from '../i18n/useI18n';
 import { MoneyText } from '../components/ui/MoneyText';
+import { ChartTooltip, CHART_CURSOR } from '../components/ui/ChartTooltip';
 import { round2, formatCompact } from '../lib/money';
 
 export function CashFlow() {
@@ -225,16 +226,22 @@ export function CashFlow() {
           <div className="h-56">
             <ResponsiveContainer>
               <LineChart data={projection}>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-                <XAxis dataKey="day" stroke="var(--text-muted)" />
-                <YAxis stroke="var(--text-muted)" tickFormatter={(v) => formatCompact(v, lang)} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" />
+                <XAxis dataKey="day" stroke="#64748b" tick={{ fill: '#64748b' }} />
+                <YAxis
+                  stroke="#64748b"
+                  tick={{ fill: '#64748b' }}
+                  tickFormatter={(v) => formatCompact(v, lang)}
+                />
                 <Tooltip
-                  formatter={(v: number) => money(v)}
-                  contentStyle={{
-                    backgroundColor: 'var(--bg-surface)',
-                    border: '1px solid var(--border-strong)',
-                    borderRadius: 8,
-                  }}
+                  cursor={CHART_CURSOR}
+                  content={
+                    <ChartTooltip
+                      money={money}
+                      colorMode="semantic"
+                      nameFormatter={() => t('cashflow.projected')}
+                    />
+                  }
                 />
                 <ReferenceLine y={0} stroke="#64748b" strokeDasharray="3 3" />
                 <Line

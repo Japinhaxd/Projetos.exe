@@ -20,7 +20,8 @@ import { useStore, getAccountBalance, getMonthlyTotals, getTotalBalance } from '
 import { useI18n } from '../i18n/useI18n';
 import { MoneyText } from '../components/ui/MoneyText';
 import { round2, sum, formatCompact } from '../lib/money';
-import { CATEGORY_COLORS } from '../types';
+import { resolveCategoryColor, semanticColor } from '../types';
+import { ChartTooltip, CHART_CURSOR, CHART_ACTIVE_BAR } from '../components/ui/ChartTooltip';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Link } from 'react-router-dom';
 
@@ -157,16 +158,18 @@ export function Dashboard() {
                     <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-                <XAxis dataKey="month" stroke="var(--text-muted)" />
-                <YAxis stroke="var(--text-muted)" tickFormatter={(v) => formatCompact(v, lang)} />
+                <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" />
+                <XAxis dataKey="month" stroke="#64748b" tick={{ fill: '#64748b' }} />
+                <YAxis stroke="#64748b" tick={{ fill: '#64748b' }} tickFormatter={(v) => formatCompact(v, lang)} />
                 <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'var(--bg-surface)',
-                    border: '1px solid var(--border-strong)',
-                    borderRadius: 8,
-                  }}
-                  formatter={(v: number) => money(v)}
+                  cursor={CHART_CURSOR}
+                  content={
+                    <ChartTooltip
+                      money={money}
+                      colorMode="semantic"
+                      nameFormatter={() => t('dashboard.totalBalance')}
+                    />
+                  }
                 />
                 <Line
                   type="monotone"
@@ -205,19 +208,21 @@ export function Dashboard() {
                     {categoryData.map((d) => (
                       <Cell
                         key={d.name}
-                        fill={CATEGORY_COLORS[d.name] || '#64748b'}
-                        stroke="var(--bg-surface)"
+                        fill={resolveCategoryColor(d.name)}
+                        stroke="#111118"
                         strokeWidth={2}
                       />
                     ))}
                   </Pie>
                   <Tooltip
-                    contentStyle={{
-                      backgroundColor: 'var(--bg-surface)',
-                      border: '1px solid var(--border-strong)',
-                      borderRadius: 8,
-                    }}
-                    formatter={(v: number, _n: any, p: any) => [money(v), tc(p.payload.name)]}
+                    cursor={CHART_CURSOR}
+                    content={
+                      <ChartTooltip
+                        money={money}
+                        colorMode="category"
+                        nameFormatter={(e) => tc((e.payload?.name ?? e.name) as string)}
+                      />
+                    }
                   />
                 </PieChart>
               </ResponsiveContainer>
@@ -230,7 +235,7 @@ export function Dashboard() {
                   <span className="flex items-center gap-2 min-w-0">
                     <span
                       className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                      style={{ background: CATEGORY_COLORS[d.name] || '#64748b' }}
+                      style={{ background: resolveCategoryColor(d.name) }}
                     />
                     <span className="truncate">{tc(d.name)}</span>
                   </span>
@@ -248,24 +253,47 @@ export function Dashboard() {
         <div className="h-60">
           <ResponsiveContainer>
             <BarChart data={barData} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
-              <XAxis dataKey="label" stroke="var(--text-muted)" />
-              <YAxis stroke="var(--text-muted)" tickFormatter={(v) => formatCompact(v, lang)} />
+              <CartesianGrid strokeDasharray="3 3" stroke="#1e1e2e" />
+              <XAxis dataKey="label" stroke="#64748b" tick={{ fill: '#64748b' }} />
+              <YAxis stroke="#64748b" tick={{ fill: '#64748b' }} tickFormatter={(v) => formatCompact(v, lang)} />
               <Tooltip
-                contentStyle={{
-                  backgroundColor: 'var(--bg-surface)',
-                  border: '1px solid var(--border-strong)',
-                  borderRadius: 8,
-                }}
-                formatter={(v: number) => money(v)}
+                cursor={CHART_CURSOR}
+                content={
+                  <ChartTooltip
+                    money={money}
+                    colorMode="dataKey"
+                    nameFormatter={(e) =>
+                      String(e.dataKey) === 'income'
+                        ? t('common.income')
+                        : t('common.expense')
+                    }
+                  />
+                }
               />
               <Legend
                 formatter={(val: string) =>
                   val === 'income' ? t('common.income') : t('common.expense')
                 }
+                wrapperStyle={{ color: '#e2e8f0' }}
               />
-              <Bar dataKey="income" fill="#3b82f6" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="expense" fill="#ef4444" radius={[4, 4, 0, 0]} />
+              <Bar
+                dataKey="income"
+                radius={[4, 4, 0, 0]}
+                activeBar={CHART_ACTIVE_BAR}
+              >
+                {barData.map((_, i) => (
+                  <Cell key={`inc-${i}`} fill="#3b82f6" />
+                ))}
+              </Bar>
+              <Bar
+                dataKey="expense"
+                radius={[4, 4, 0, 0]}
+                activeBar={CHART_ACTIVE_BAR}
+              >
+                {barData.map((_, i) => (
+                  <Cell key={`exp-${i}`} fill="#ef4444" />
+                ))}
+              </Bar>
             </BarChart>
           </ResponsiveContainer>
         </div>

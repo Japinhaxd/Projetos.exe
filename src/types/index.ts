@@ -117,16 +117,46 @@ export const CATEGORIES = [
 
 export type Category = (typeof CATEGORIES)[number];
 
+// ============================================================
+// Strict chart color palette
+// ------------------------------------------------------------
+// Expenses use a red / warm family; income uses a blue / cyan family.
+// Every chart component MUST pull colors from this map via
+// resolveCategoryColor() below — never hard-code per category.
+// ============================================================
 export const CATEGORY_COLORS: Record<string, string> = {
-  Food: '#f59e0b',
-  Transport: '#8b5cf6',
-  Housing: '#06b6d4',
-  Health: '#10b981',
-  Entertainment: '#ec4899',
-  Salary: '#3b82f6',
-  Investment: '#22c55e',
-  Other: '#64748b',
+  // Expense family (red → warm)
+  Housing: '#ef4444',        // Moradia
+  Food: '#f97316',           // Alimentação
+  Transport: '#eab308',      // Transporte
+  Health: '#ec4899',         // Saúde
+  Entertainment: '#a855f7',  // Lazer
+  Other: '#64748b',          // Outros
+
+  // Income family (blue / cyan)
+  Salary: '#3b82f6',         // Salário
+  Investment: '#06b6d4',     // Investimento
 };
+
+/**
+ * Resolve a stable color for a category. Unknown categories fall back to
+ * the neutral gray, guaranteeing we never leak a Recharts default palette.
+ */
+export function resolveCategoryColor(category: string): string {
+  return CATEGORY_COLORS[category] ?? '#64748b';
+}
+
+/**
+ * Strict semantic color rule used by every chart and UI surface.
+ *   value > 0 → blue  (#3b82f6)
+ *   value < 0 → red   (#ef4444)
+ *   value = 0 → gray  (#64748b)
+ */
+export function semanticColor(value: number): string {
+  if (value > 0) return '#3b82f6';
+  if (value < 0) return '#ef4444';
+  return '#64748b';
+}
 
 export const ACCOUNT_COLORS = [
   '#3b82f6',
