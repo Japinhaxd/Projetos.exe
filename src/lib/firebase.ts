@@ -2,7 +2,6 @@ import type { FirebaseApp } from 'firebase/app';
 import { initializeApp, getApps } from 'firebase/app';
 import {
   GoogleAuthProvider,
-  OAuthProvider,
   browserLocalPersistence,
   getAuth,
   onAuthStateChanged,
@@ -12,60 +11,84 @@ import {
   type Auth,
   type User,
 } from 'firebase/auth';
-import type { AuthUser, FirebaseConfig } from '../types';
+import type { AuthUser } from '../types';
+
+// ============================================================
+// Firebase configuration — sourced exclusively from Vite env
+// vars at build time. There is NO runtime config modal anymore;
+// keys live in `.env` / hosting environment.
+// ============================================================
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string | undefined,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string | undefined,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string | undefined,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID as string | undefined,
+};
 
 let _app: FirebaseApp | null = null;
 let _auth: Auth | null = null;
 
-export function initFirebase(config: FirebaseConfig): Auth {
-  if (_app) return _auth!;
-  try {
-    _app = getApps().length
-      ? getApps()[0]
-      : initializeApp({
-          apiKey: config.apiKey,
-          authDomain: config.authDomain,
-          projectId: config.projectId,
-          appId: config.appId,
-          messagingSenderId: config.messagingSenderId,
-          storageBucket: config.storageBucket,
-        });
-    _auth = getAuth(_app);
-    setPersistence(_auth, browserLocalPersistence).catch(() => {});
-    return _auth;
-  } catch (e) {
-    console.error('Firebase init failed', e);
-    throw e;
+/**
+ * True only when every required env var is present at build time.
+ * Login UI uses this to gracefully fall back to "local mode" when
+ * Firebase has not been provisioned yet.
+ */
+export function isFirebaseConfigured(): boolean {
+  return Boolean(
+    firebaseConfig.apiKey &&
+      firebaseConfig.authDomain &&
+      firebaseConfig.projectId &&
+      firebaseConfig.appId,
+  );
+}
+
+/**
+ * Initialize Firebase using the env-driven config. Idempotent — safe
+ * to call multiple times. Throws if env vars are missing.
+ */
+export function initFirebase(): Auth {
+  if (_auth) return _auth;
+  if (!isFirebaseConfigured()) {
+    throw new Error(
+      'Firebase environment variables are missing (VITE_FIREBASE_*).',
+    );
   }
+  _app = getApps().length
+    ? getApps()[0]
+    : initializeApp({
+        apiKey: firebaseConfig.apiKey!,
+        authDomain: firebaseConfig.authDomain!,
+        projectId: firebaseConfig.projectId!,
+        appId: firebaseConfig.appId!,
+        messagingSenderId: firebaseConfig.messagingSenderId,
+        storageBucket: firebaseConfig.storageBucket,
+      });
+  _auth = getAuth(_app);
+  setPersistence(_auth, browserLocalPersistence).catch(() => {});
+  return _auth;
 }
 
 export function getAuthInstance(): Auth | null {
   return _auth;
 }
 
-function userToAuthUser(u: User, provider: 'google' | 'microsoft'): AuthUser {
+function userToAuthUser(u: User): AuthUser {
   return {
     uid: u.uid,
     displayName: u.displayName || u.email?.split('@')[0] || 'User',
     email: u.email || '',
     photoURL: u.photoURL || '',
-    provider,
+    provider: 'google',
   };
 }
 
 export async function loginWithGoogle(): Promise<AuthUser> {
-  if (!_auth) throw new Error('Firebase not initialized');
+  const auth = initFirebase();
   const provider = new GoogleAuthProvider();
-  const cred = await signInWithPopup(_auth, provider);
-  return userToAuthUser(cred.user, 'google');
-}
-
-export async function loginWithMicrosoft(): Promise<AuthUser> {
-  if (!_auth) throw new Error('Firebase not initialized');
-  const provider = new OAuthProvider('microsoft.com');
-  provider.setCustomParameters({ prompt: 'consent' });
-  const cred = await signInWithPopup(_auth, provider);
-  return userToAuthUser(cred.user, 'microsoft');
+  const cred = await signInWithPopup(auth, provider);
+  return userToAuthUser(cred.user);
 }
 
 export async function firebaseLogout(): Promise<void> {
@@ -77,37 +100,10 @@ export async function firebaseLogout(): Promise<void> {
 }
 
 export function subscribeAuth(
-  cb: (user: AuthUser | null, provider?: 'google' | 'microsoft') => void,
+  cb: (user: AuthUser | null) => void,
 ): () => void {
   if (!_auth) return () => {};
   return onAuthStateChanged(_auth, (u) => {
-    if (u) {
-      const providerData = u.providerData[0]?.providerId || '';
-      const provider: 'google' | 'microsoft' = providerData.includes('microsoft')
-        ? 'microsoft'
-        : 'google';
-      cb(userToAuthUser(u, provider), provider);
-    } else {
-      cb(null);
-    }
+    cb(u ? userToAuthUser(u) : null);
   });
-}
-
-export function validateFirebaseConfig(raw: string): FirebaseConfig | null {
-  try {
-    // Accept either pure JSON or the common `const firebaseConfig = { ... };` snippet
-    let text = raw.trim();
-    const match = text.match(/\{[\s\S]*\}/);
-    if (match) text = match[0];
-    // Tolerant parse — convert JS-like object to JSON
-    text = text
-      .replace(/([,{]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":')
-      .replace(/'/g, '"')
-      .replace(/,\s*}/g, '}');
-    const obj = JSON.parse(text);
-    if (!obj.apiKey || !obj.authDomain || !obj.projectId || !obj.appId) return null;
-    return obj as FirebaseConfig;
-  } catch {
-    return null;
-  }
 }

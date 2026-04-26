@@ -262,22 +262,15 @@ export function Dashboard() {
                   <ChartTooltip
                     money={money}
                     colorMode="dataKey"
-                    nameFormatter={(e) =>
-                      String(e.dataKey) === 'income'
-                        ? t('common.income')
-                        : t('common.expense')
-                    }
+                    nameFormatter={(e) => String(e.name ?? '')}
                   />
                 }
               />
-              <Legend
-                formatter={(val: string) =>
-                  val === 'income' ? t('common.income') : t('common.expense')
-                }
-                wrapperStyle={{ color: '#e2e8f0' }}
-              />
+              <Legend wrapperStyle={{ color: '#e2e8f0' }} />
               <Bar
                 dataKey="income"
+                name={t('common.income')}
+                fill="#3b82f6"
                 radius={[4, 4, 0, 0]}
                 activeBar={CHART_ACTIVE_BAR}
               >
@@ -287,6 +280,8 @@ export function Dashboard() {
               </Bar>
               <Bar
                 dataKey="expense"
+                name={t('common.expense')}
+                fill="#ef4444"
                 radius={[4, 4, 0, 0]}
                 activeBar={CHART_ACTIVE_BAR}
               >

@@ -19,13 +19,9 @@ export const LANG_META: {
 export type TranslationKey =
   | 'app.tagline'
   | 'app.continueGoogle'
-  | 'app.continueMicrosoft'
   | 'app.localOnly'
   | 'app.localModeLink'
-  | 'app.setupFirebase'
-  | 'app.setupFirebaseDesc'
-  | 'app.pasteConfig'
-  | 'app.saveContinue'
+  | 'app.firebaseNotConfigured'
   | 'app.cancel'
   | 'app.logout'
   | 'nav.dashboard'
@@ -172,8 +168,6 @@ export type TranslationKey =
   | 'settings.data'
   | 'settings.themeDark'
   | 'settings.themeLight'
-  | 'settings.firebaseConfig'
-  | 'settings.firebaseHelp'
   | 'settings.pluggyKeys'
   | 'settings.pluggyClientId'
   | 'settings.pluggyClientSecret'
@@ -204,7 +198,6 @@ export type TranslationKey =
   | 'toast.syncSuccess'
   | 'toast.syncError'
   | 'toast.invalidJSON'
-  | 'toast.invalidFirebase'
   | 'toast.loggedOut'
   | 'toast.missingPluggy';
 
@@ -213,14 +206,9 @@ type Dict = Record<TranslationKey, string>;
 const pt_BR: Dict = {
   'app.tagline': 'Seu sistema operacional financeiro pessoal',
   'app.continueGoogle': 'Continuar com Google',
-  'app.continueMicrosoft': 'Continuar com Microsoft',
   'app.localOnly': 'Seus dados ficam armazenados localmente no seu dispositivo',
   'app.localModeLink': 'Continuar sem login (modo local)',
-  'app.setupFirebase': 'Configurar autenticação',
-  'app.setupFirebaseDesc':
-    'Para habilitar o login, cole a configuração do seu projeto Firebase abaixo',
-  'app.pasteConfig': 'Cole aqui o JSON de configuração (firebaseConfig)',
-  'app.saveContinue': 'Salvar e continuar',
+  'app.firebaseNotConfigured': 'Autenticação Firebase não configurada. Defina as variáveis VITE_FIREBASE_* no ambiente.',
   'app.cancel': 'Cancelar',
   'app.logout': 'Sair',
   'nav.dashboard': 'Dashboard',
@@ -370,9 +358,6 @@ const pt_BR: Dict = {
   'settings.data': 'Dados',
   'settings.themeDark': 'Modo escuro',
   'settings.themeLight': 'Modo claro',
-  'settings.firebaseConfig': 'Configuração Firebase',
-  'settings.firebaseHelp':
-    'Cole o objeto firebaseConfig do seu projeto para habilitar login social.',
   'settings.pluggyKeys': 'Chaves do Pluggy',
   'settings.pluggyClientId': 'CLIENT_ID',
   'settings.pluggyClientSecret': 'CLIENT_SECRET',
@@ -405,7 +390,6 @@ const pt_BR: Dict = {
   'toast.syncSuccess': 'Sincronização concluída',
   'toast.syncError': 'Erro ao sincronizar',
   'toast.invalidJSON': 'JSON inválido',
-  'toast.invalidFirebase': 'Configuração Firebase inválida',
   'toast.loggedOut': 'Você saiu',
   'toast.missingPluggy': 'Configure as chaves do Pluggy primeiro',
 };
@@ -413,14 +397,9 @@ const pt_BR: Dict = {
 const en_US: Dict = {
   'app.tagline': 'Your personal financial OS',
   'app.continueGoogle': 'Continue with Google',
-  'app.continueMicrosoft': 'Continue with Microsoft',
   'app.localOnly': 'Your data is stored locally on your device',
   'app.localModeLink': 'Continue without login (local mode)',
-  'app.setupFirebase': 'Set up authentication',
-  'app.setupFirebaseDesc':
-    'To enable login, paste your Firebase project config below',
-  'app.pasteConfig': 'Paste your firebaseConfig JSON here',
-  'app.saveContinue': 'Save & Continue',
+  'app.firebaseNotConfigured': 'Firebase auth is not configured. Set the VITE_FIREBASE_* environment variables.',
   'app.cancel': 'Cancel',
   'app.logout': 'Log out',
   'nav.dashboard': 'Dashboard',
@@ -570,9 +549,6 @@ const en_US: Dict = {
   'settings.data': 'Data',
   'settings.themeDark': 'Dark',
   'settings.themeLight': 'Light',
-  'settings.firebaseConfig': 'Firebase Config',
-  'settings.firebaseHelp':
-    'Paste your Firebase project firebaseConfig object to enable social login.',
   'settings.pluggyKeys': 'Pluggy API Keys',
   'settings.pluggyClientId': 'CLIENT_ID',
   'settings.pluggyClientSecret': 'CLIENT_SECRET',
@@ -605,7 +581,6 @@ const en_US: Dict = {
   'toast.syncSuccess': 'Sync complete',
   'toast.syncError': 'Sync failed',
   'toast.invalidJSON': 'Invalid JSON',
-  'toast.invalidFirebase': 'Invalid Firebase config',
   'toast.loggedOut': 'You logged out',
   'toast.missingPluggy': 'Set your Pluggy keys first',
 };
@@ -615,13 +590,8 @@ const en_US: Dict = {
 const es: Partial<Dict> = {
   'app.tagline': 'Tu sistema operativo financiero personal',
   'app.continueGoogle': 'Continuar con Google',
-  'app.continueMicrosoft': 'Continuar con Microsoft',
   'app.localOnly': 'Tus datos se almacenan localmente en tu dispositivo',
   'app.localModeLink': 'Continuar sin iniciar sesión (modo local)',
-  'app.setupFirebase': 'Configurar autenticación',
-  'app.setupFirebaseDesc':
-    'Para habilitar el inicio de sesión, pega la configuración de tu proyecto Firebase',
-  'app.saveContinue': 'Guardar y continuar',
   'app.cancel': 'Cancelar',
   'app.logout': 'Cerrar sesión',
   'nav.dashboard': 'Panel',
@@ -724,7 +694,6 @@ const es: Partial<Dict> = {
 const fr: Partial<Dict> = {
   'app.tagline': 'Votre système d\'exploitation financier personnel',
   'app.continueGoogle': 'Continuer avec Google',
-  'app.continueMicrosoft': 'Continuer avec Microsoft',
   'app.localOnly': 'Vos données sont stockées localement sur votre appareil',
   'app.localModeLink': 'Continuer sans connexion (mode local)',
   'app.logout': 'Se déconnecter',
@@ -803,7 +772,6 @@ const fr: Partial<Dict> = {
 const de: Partial<Dict> = {
   'app.tagline': 'Dein persönliches Finanzbetriebssystem',
   'app.continueGoogle': 'Mit Google fortfahren',
-  'app.continueMicrosoft': 'Mit Microsoft fortfahren',
   'app.localOnly': 'Deine Daten werden lokal auf deinem Gerät gespeichert',
   'app.localModeLink': 'Ohne Anmeldung fortfahren (lokaler Modus)',
   'app.logout': 'Abmelden',
@@ -869,7 +837,6 @@ const de: Partial<Dict> = {
 const it: Partial<Dict> = {
   'app.tagline': 'Il tuo sistema operativo finanziario personale',
   'app.continueGoogle': 'Continua con Google',
-  'app.continueMicrosoft': 'Continua con Microsoft',
   'app.localOnly': 'I tuoi dati sono memorizzati localmente sul tuo dispositivo',
   'app.localModeLink': 'Continua senza accesso (modalità locale)',
   'app.logout': 'Esci',
@@ -934,7 +901,6 @@ const it: Partial<Dict> = {
 const zh: Partial<Dict> = {
   'app.tagline': '您的个人金融操作系统',
   'app.continueGoogle': '使用 Google 继续',
-  'app.continueMicrosoft': '使用 Microsoft 继续',
   'app.localOnly': '您的数据存储在本地设备上',
   'app.localModeLink': '不登录继续(本地模式)',
   'app.logout': '登出',
@@ -999,7 +965,6 @@ const zh: Partial<Dict> = {
 const ja: Partial<Dict> = {
   'app.tagline': 'あなたのパーソナル金融OS',
   'app.continueGoogle': 'Google で続ける',
-  'app.continueMicrosoft': 'Microsoft で続ける',
   'app.localOnly': 'データはお使いのデバイスにローカル保存されます',
   'app.localModeLink': 'ログインせずに続ける(ローカルモード)',
   'app.logout': 'ログアウト',

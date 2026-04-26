@@ -18,10 +18,10 @@ import {
 import { useStore } from '../store/useStore';
 import { useI18n } from '../i18n/useI18n';
 import { LANG_META } from '../i18n/translations';
-import type { FirebaseConfig, SupportedLanguage, Theme } from '../types';
+import type { SupportedLanguage, Theme } from '../types';
 import { Confirm } from '../components/ui/Confirm';
 import { format } from 'date-fns';
-import { firebaseLogout, validateFirebaseConfig } from '../lib/firebase';
+import { firebaseLogout } from '../lib/firebase';
 import { MoneyText } from '../components/ui/MoneyText';
 
 export function Settings() {
@@ -32,8 +32,6 @@ export function Settings() {
   const setLang = useStore((s) => s.setLang);
   const user = useStore((s) => s.user);
   const setUser = useStore((s) => s.setUser);
-  const firebaseConfig = useStore((s) => s.firebaseConfig);
-  const setFirebaseConfig = useStore((s) => s.setFirebaseConfig);
   const pluggyCreds = useStore((s) => s.pluggyCreds);
   const setPluggyCreds = useStore((s) => s.setPluggyCreds);
   const transactions = useStore((s) => s.transactions);
@@ -44,9 +42,6 @@ export function Settings() {
   const deleteTransaction = useStore((s) => s.deleteTransaction);
   const pushToast = useStore((s) => s.pushToast);
 
-  const [firebaseText, setFirebaseText] = useState(
-    firebaseConfig ? JSON.stringify(firebaseConfig, null, 2) : '',
-  );
   const [pluggyId, setPluggyId] = useState(pluggyCreds?.clientId || '');
   const [pluggySecret, setPluggySecret] = useState(pluggyCreds?.clientSecret || '');
   const [showSecret, setShowSecret] = useState(false);
@@ -59,21 +54,6 @@ export function Settings() {
   // ==========================================================
   // Actions
   // ==========================================================
-  function handleSaveFirebase() {
-    if (!firebaseText.trim()) {
-      setFirebaseConfig(null);
-      pushToast({ type: 'info', message: t('toast.saved') });
-      return;
-    }
-    const parsed: FirebaseConfig | null = validateFirebaseConfig(firebaseText);
-    if (!parsed) {
-      pushToast({ type: 'error', message: t('toast.invalidFirebase') });
-      return;
-    }
-    setFirebaseConfig(parsed);
-    pushToast({ type: 'success', message: t('toast.saved') });
-  }
-
   function handleSavePluggy() {
     if (!pluggyId || !pluggySecret) {
       setPluggyCreds(null);
@@ -212,32 +192,8 @@ export function Settings() {
 
         {/* ========== INTEGRATIONS ========== */}
         <Section icon={Link2} title={t('settings.integrations')}>
-          {/* Firebase */}
-          <div className="mb-6">
-            <label className="block text-xs font-medium text-muted mb-1.5">
-              {t('settings.firebaseConfig')}
-            </label>
-            <textarea
-              className="input font-mono text-xs"
-              rows={6}
-              placeholder='{"apiKey": "...", "authDomain": "..."}'
-              value={firebaseText}
-              onChange={(e) => setFirebaseText(e.target.value)}
-            />
-            <p className="text-[11px] text-muted mt-1.5 flex items-start gap-1.5">
-              <HelpCircle size={12} className="flex-shrink-0 mt-0.5" />
-              {t('settings.firebaseHelp')}
-            </p>
-            <button
-              className="btn btn-ghost mt-2"
-              onClick={handleSaveFirebase}
-            >
-              {t('common.save')}
-            </button>
-          </div>
-
           {/* Pluggy */}
-          <div className="pt-4 border-t border-border">
+          <div>
             <div className="text-sm font-medium mb-3">{t('settings.pluggyKeys')}</div>
             <div className="space-y-3">
               <div>

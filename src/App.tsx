@@ -10,7 +10,7 @@ import { Budgets } from './pages/Budgets';
 import { Accounts } from './pages/Accounts';
 import { Settings } from './pages/Settings';
 import { Login } from './pages/Login';
-import { initFirebase, subscribeAuth } from './lib/firebase';
+import { initFirebase, isFirebaseConfigured, subscribeAuth } from './lib/firebase';
 import { getApiKey, getStoredPluggyItems, syncPluggyItem } from './lib/pluggy';
 import { Toasts } from './components/ui/Toasts';
 
@@ -34,7 +34,6 @@ export default function App() {
   const seedIfEmpty = useStore((s) => s.seedIfEmpty);
   const theme = useStore((s) => s.theme);
   const lang = useStore((s) => s.lang);
-  const firebaseConfig = useStore((s) => s.firebaseConfig);
   const setUser = useStore((s) => s.setUser);
 
   const bootRef = useRef(false);
@@ -62,11 +61,11 @@ export default function App() {
     document.documentElement.lang = lang;
   }, [lang]);
 
-  // Firebase init + listener
+  // Firebase init + listener — driven by build-time env vars
   useEffect(() => {
-    if (!firebaseConfig) return;
+    if (!isFirebaseConfigured()) return;
     try {
-      initFirebase(firebaseConfig);
+      initFirebase();
       const unsub = subscribeAuth((u) => {
         if (u) setUser(u);
       });
@@ -74,7 +73,7 @@ export default function App() {
     } catch (e) {
       console.warn('Firebase init failed', e);
     }
-  }, [firebaseConfig, setUser]);
+  }, [setUser]);
 
   // Background Pluggy auto-sync (once per session)
   useEffect(() => {

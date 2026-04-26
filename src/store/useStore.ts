@@ -3,7 +3,6 @@ import type {
   Account,
   AuthUser,
   Budget,
-  FirebaseConfig,
   PluggyCredentials,
   SupportedLanguage,
   Theme,
@@ -29,7 +28,6 @@ interface State {
 
   // Auth
   user: AuthUser | null;
-  firebaseConfig: FirebaseConfig | null;
 
   // Integrations
   pluggyCreds: PluggyCredentials | null;
@@ -74,7 +72,6 @@ interface Actions {
 
   // Auth
   setUser: (u: AuthUser | null) => void;
-  setFirebaseConfig: (c: FirebaseConfig | null) => void;
 
   // Pluggy
   setPluggyCreds: (c: PluggyCredentials | null) => void;
@@ -105,7 +102,6 @@ export const useStore = create<State & Actions>((set, get) => ({
   lang: 'pt-BR',
   sidebarCollapsed: false,
   user: null,
-  firebaseConfig: null,
   pluggyCreds: null,
   toasts: [],
 
@@ -117,7 +113,11 @@ export const useStore = create<State & Actions>((set, get) => ({
     const lang = lsGet<SupportedLanguage>(LS_KEYS.lang, 'pt-BR');
     const sidebarCollapsed = lsGet<boolean>(LS_KEYS.sidebarCollapsed, false);
     const user = lsGet<AuthUser | null>(LS_KEYS.user, null);
-    const firebaseConfig = lsGet<FirebaseConfig | null>(LS_KEYS.firebase, null);
+
+    // Best-effort cleanup of legacy localStorage key from previous versions
+    try {
+      localStorage.removeItem(LS_KEYS.firebase);
+    } catch {}
 
     // Deobfuscate pluggy creds
     const obfPluggy = lsGet<{ clientId: string; clientSecret: string } | null>(
@@ -139,7 +139,6 @@ export const useStore = create<State & Actions>((set, get) => ({
       lang,
       sidebarCollapsed,
       user,
-      firebaseConfig,
       pluggyCreds,
     });
   },
@@ -450,12 +449,6 @@ export const useStore = create<State & Actions>((set, get) => ({
     set({ user: u });
     if (u) lsSet(LS_KEYS.user, u);
     else localStorage.removeItem(LS_KEYS.user);
-  },
-
-  setFirebaseConfig: (c) => {
-    set({ firebaseConfig: c });
-    if (c) lsSet(LS_KEYS.firebase, c);
-    else localStorage.removeItem(LS_KEYS.firebase);
   },
 
   // ==========================================================
